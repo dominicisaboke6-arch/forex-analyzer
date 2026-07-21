@@ -3,21 +3,28 @@ import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 from streamlit_autorefresh import st_autorefresh
+
+# Optional MT5 Library Import Guard
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    MT5_AVAILABLE = False
 
 # ---------------------------------------------------------
 # 1. PAGE SETUP & AUTO-REFRESH (10 SECONDS)
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="MINION - Quantitative Trading Intelligence Engine",
+    page_title="MINION - Unfiltered Quant Signal Engine",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Auto-refresh Python signal engine every 10 seconds
+# Refresh signal engine every 10 seconds
 st_autorefresh(interval=10000, key="minion_live_refresh")
 
 st.markdown("""
@@ -58,12 +65,12 @@ if "ml_dataset" not in st.session_state:
     st.session_state.ml_dataset = []
 
 # ---------------------------------------------------------
-# 2. MINION BRANDING HEADER
+# 2. BRANDING HEADER
 # ---------------------------------------------------------
 st.markdown("""
 <div class="minion-header">
-    <div class="minion-title">⚡ MINION QUANT ALPHA V4 ⚡</div>
-    <div class="minion-subtitle">Multi-Layer Decision Engine • Market Regime Detection • Structural Setup Verification • Risk Filter</div>
+    <div class="minion-title">⚡ MINION QUANT ENGINE V4.1 ⚡</div>
+    <div class="minion-subtitle">Structure-Driven Direct Signal Execution • Market Regime • Risk Filter • MT5 Ready</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -72,7 +79,7 @@ st.markdown("""
 # ---------------------------------------------------------
 clock_html = """
 <div style="background-color: #151a23; border: 1px solid #232a3b; padding: 10px 15px; border-radius: 8px; text-align: center; margin-bottom: 15px;">
-    <span style="color: #888888; font-size: 13px; font-weight: bold; font-family: monospace;">EAT LIVE CLOCK:</span>
+    <span style="color: #888888; font-size: 13px; font-weight: bold; font-family: monospace;">LIVE TIME:</span>
     <span id="live_clock" style="color: #00e676; font-size: 16px; font-weight: bold; font-family: monospace; margin-left: 10px;">--:--:--</span>
 </div>
 <script>
@@ -92,16 +99,16 @@ components.html(clock_html, height=55)
 # ---------------------------------------------------------
 # 4. SIDEBAR CONTROLS & PARAMS
 # ---------------------------------------------------------
-st.sidebar.header("🕹️ Decision Engine & Filters")
+st.sidebar.header("🕹️ Execution Engine Settings")
 
-trading_mode = st.sidebar.radio("Execution Strategy", ["📈 High Confluence Scalp (5m)", "📊 Macro Trend Swing (15m/1h)"])
+trading_mode = st.sidebar.radio("Execution Mode", ["📈 High Confluence Scalp (5m)", "📊 Macro Trend Swing (15m/1h)"])
 selected_asset = st.sidebar.selectbox("Asset Pair", ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD", "USD/JPY"])
 
 asset_map = {
-    "Gold (Spot XAU/USD)": {"yf": ["GC=F", "XAUUSD=X"], "tv": "OANDA:XAUUSD", "dec": 2},
-    "EUR/USD": {"yf": ["EURUSD=X"], "tv": "FX:EURUSD", "dec": 4},
-    "GBP/USD": {"yf": ["GBPUSD=X"], "tv": "FX:GBPUSD", "dec": 4},
-    "USD/JPY": {"yf": ["JPY=X", "USDJPY=X"], "tv": "FX:USDJPY", "dec": 2}
+    "Gold (Spot XAU/USD)": {"yf": ["GC=F", "XAUUSD=X"], "tv": "OANDA:XAUUSD", "mt5": "XAUUSD", "dec": 2},
+    "EUR/USD": {"yf": ["EURUSD=X"], "tv": "FX:EURUSD", "mt5": "EURUSD", "dec": 4},
+    "GBP/USD": {"yf": ["GBPUSD=X"], "tv": "FX:GBPUSD", "mt5": "GBPUSD", "dec": 4},
+    "USD/JPY": {"yf": ["JPY=X", "USDJPY=X"], "tv": "FX:USDJPY", "mt5": "USDJPY", "dec": 2}
 }
 
 curr_info = asset_map[selected_asset]
@@ -113,12 +120,53 @@ else:
     interval = st.sidebar.selectbox("Timeframe", ["15m", "1h"], index=0)
     period = "1mo"
 
-cooldown_period_mins = st.sidebar.slider("Signal Cooldown (Minutes)", 5, 60, 20)
-min_rr_threshold = st.sidebar.slider("Min Risk-to-Reward Ratio (1:X)", 1.2, 3.0, 1.5, step=0.1)
-min_confluence_cutoff = st.sidebar.slider("Min Confluence Threshold (%)", 50, 90, 65)
+cooldown_period_mins = st.sidebar.slider("Signal Cooldown (Minutes)", 0, 60, 15)
+min_rr_threshold = st.sidebar.slider("Min Risk-to-Reward Ratio (1:X)", 1.0, 3.0, 1.5, step=0.1)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🤖 MetaTrader 5 Direct Bridge")
+enable_mt5 = st.sidebar.checkbox("Enable Auto-Execution on MT5", value=False)
+mt5_lot_size = st.sidebar.number_input("MT5 Order Lot Size", min_value=0.01, max_value=10.0, value=0.01, step=0.01)
+
+# Helper function for MT5 execution
+def send_mt5_order(symbol_name, action, volume, sl_val, tp_val):
+    if not MT5_AVAILABLE:
+        st.sidebar.error("MetaTrader5 python package not installed.")
+        return False
+    if not mt5.initialize():
+        st.sidebar.error("MT5 terminal not running or algorithmic trading disabled.")
+        return False
+
+    mt5_sym = curr_info["mt5"]
+    mt5.symbol_select(mt5_sym, True)
+    tick = mt5.symbol_info_tick(mt5_sym)
+    if not tick:
+        mt5.shutdown()
+        return False
+
+    price_act = tick.ask if action == "BUY" else tick.bid
+    order_type = mt5.ORDER_TYPE_BUY if action == "BUY" else mt5.ORDER_TYPE_SELL
+
+    req = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": mt5_sym,
+        "volume": float(volume),
+        "type": order_type,
+        "price": float(price_act),
+        "sl": float(sl_val),
+        "tp": float(tp_val),
+        "deviation": 20,
+        "magic": 202607,
+        "comment": "MINION Signal Engine",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+    res = mt5.order_send(req)
+    mt5.shutdown()
+    return res.retcode == mt5.TRADE_RETCODE_DONE if res else False
 
 # ---------------------------------------------------------
-# 5. DATA ENGINE & TECHNICAL CALCULATIONS
+# 5. DATA FETCHING & INDICATOR ENGINE
 # ---------------------------------------------------------
 data = pd.DataFrame()
 for ticker in curr_info["yf"]:
@@ -142,13 +190,13 @@ if not data.empty:
     else:
         data.index = data.index.tz_convert(eat_tz)
 
-    # Core Moving Averages
+    # Core Indicators
     data["EMA_9"] = data["Close"].ewm(span=9, adjust=False).mean()
     data["EMA_20"] = data["Close"].ewm(span=20, adjust=False).mean()
     data["EMA_50"] = data["Close"].ewm(span=50, adjust=False).mean()
     data["EMA_200"] = data["Close"].ewm(span=200, adjust=False).mean()
 
-    # RSI Calculation
+    # RSI
     delta = data["Close"].diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
@@ -157,14 +205,14 @@ if not data.empty:
     rs = avg_gain / avg_loss
     data["RSI"] = 100 - (100 / (1 + rs))
 
-    # MACD Calculation
+    # MACD
     data["EMA_12"] = data["Close"].ewm(span=12, adjust=False).mean()
     data["EMA_26"] = data["Close"].ewm(span=26, adjust=False).mean()
     data["MACD"] = data["EMA_12"] - data["EMA_26"]
     data["MACD_Signal"] = data["MACD"].ewm(span=9, adjust=False).mean()
     data["MACD_Hist"] = data["MACD"] - data["MACD_Signal"]
 
-    # ATR Volatility
+    # ATR
     high_low = data["High"] - data["Low"]
     high_close = (data["High"] - data["Close"].shift()).abs()
     low_close = (data["Low"] - data["Close"].shift()).abs()
@@ -172,7 +220,7 @@ if not data.empty:
     data["ATR"] = tr.ewm(span=14, adjust=False).mean()
     data["ATR_MA"] = data["ATR"].rolling(window=20).mean()
 
-    # ADX Calculation (Trend Strength)
+    # ADX Calculation
     up_move = data["High"] - data["High"].shift(1)
     down_move = data["Low"].shift(1) - data["Low"]
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
@@ -185,7 +233,7 @@ if not data.empty:
     dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
     data["ADX"] = dx.ewm(alpha=1/14, adjust=False).mean()
 
-    # Market Structure (Swings, BOS, CHoCH, Sweeps)
+    # Market Structure (Swings & Setups)
     swing_window = 10
     data["Swing_High"] = data["High"].rolling(window=swing_window).max().shift(1)
     data["Swing_Low"] = data["Low"].rolling(window=swing_window).min().shift(1)
@@ -232,8 +280,8 @@ if not data.empty:
     choch_bullish = (prev_1["Close"] < swing_low) and (price > ema20)
     choch_bearish = (prev_1["Close"] > swing_high) and (price < ema20)
 
-    sweep_bullish = (low_p < swing_low) and (price > swing_low)  # Liquidity sweep below low + rejection
-    sweep_bearish = (high_p > swing_high) and (price < swing_high) # Liquidity sweep above high + rejection
+    sweep_bullish = (low_p < swing_low) and (price > swing_low)
+    sweep_bearish = (high_p > swing_high) and (price < swing_high)
 
     valid_setup = "NONE"
     setup_description = "No structural setup detected."
@@ -246,25 +294,24 @@ if not data.empty:
         setup_description = f"Bearish Break of Structure (BOS) below ${swing_low:.{curr_info['dec']}f}"
     elif sweep_bullish:
         valid_setup = "BULLISH_SWEEP"
-        setup_description = "Liquidity Sweep of Swing Low followed by bullish rejection."
+        setup_description = "Liquidity Sweep of Swing Low with Bullish Rejection."
     elif sweep_bearish:
         valid_setup = "BEARISH_SWEEP"
-        setup_description = "Liquidity Sweep of Swing High followed by bearish rejection."
+        setup_description = "Liquidity Sweep of Swing High with Bearish Rejection."
     elif choch_bullish:
         valid_setup = "BULLISH_CHOCH"
-        setup_description = "Change of Character (CHoCH) shift to Bullish Momentum."
+        setup_description = "Change of Character (CHoCH) shift to Bullish."
     elif choch_bearish:
         valid_setup = "BEARISH_CHOCH"
-        setup_description = "Change of Character (CHoCH) shift to Bearish Momentum."
+        setup_description = "Change of Character (CHoCH) shift to Bearish."
 
-    # Calculate Weighted Confluence Score (0 - 100)
+    # Calculated conviction score for reference
     score = 0
     if "BULLISH" in regime and "BULLISH" in valid_setup: score += 35
     if "BEARISH" in regime and "BEARISH" in valid_setup: score += 35
     if valid_setup != "NONE": score += 25
     if (ema9 > ema20 and macd_hist > 0) if "BULLISH" in valid_setup else (ema9 < ema20 and macd_hist < 0): score += 20
     if (50 <= rsi <= 68) if "BULLISH" in valid_setup else (32 <= rsi <= 50): score += 20
-
     confidence_pct = min(score, 100)
 
     # ---------------------------------------------------------
@@ -276,7 +323,7 @@ if not data.empty:
     proposed_sl = 0.0
     proposed_tp = 0.0
     risk_passed = False
-    risk_reason = "Pending structure setup."
+    risk_reason = "Awaiting structure setup."
 
     if "BULLISH" in valid_setup:
         proposed_sl = price - (atr_val * sl_mult)
@@ -289,56 +336,60 @@ if not data.empty:
     tp_dist = abs(proposed_tp - price)
     calculated_rr = (tp_dist / sl_dist) if sl_dist > 0 else 0.0
 
-    # Risk Check Evaluations
     if atr_val > (atr_ma * 2.2):
         risk_passed = False
-        risk_reason = "REJECTED: Hyper-volatility anomaly detected (News/Spike Risk)."
-    elif regime == "RANGING / CHOPPY 🟡":
+        risk_reason = "REJECTED: Extreme volatility spike detected."
+    elif calculated_rr < min_rr_threshold and valid_setup != "NONE":
         risk_passed = False
-        risk_reason = "REJECTED: Market is in a low-probability choppy range."
-    elif calculated_rr < min_rr_threshold:
-        risk_passed = False
-        risk_reason = f"REJECTED: RRR ({calculated_rr:.2f}) is below target threshold ({min_rr_threshold:.1f})."
+        risk_reason = f"REJECTED: Risk-Reward ({calculated_rr:.2f}) below threshold ({min_rr_threshold:.1f})."
     elif valid_setup == "NONE":
         risk_passed = False
-        risk_reason = "REJECTED: Lacks verified market structure setup (BOS/CHoCH/Sweep)."
+        risk_reason = "Awaiting market structure setup (BOS / CHoCH / Sweep)."
     else:
         risk_passed = True
-        risk_reason = f"PASSED: RRR = 1:{calculated_rr:.2f} | Volatility Normal."
+        risk_reason = f"APPROVED: Structure verified | RRR = 1:{calculated_rr:.2f}"
 
     # ---------------------------------------------------------
-    # FINAL SIGNAL EVALUATION ENGINE
+    # DIRECT SIGNAL GENERATION (THRESHOLD LIMITATION REMOVED)
     # ---------------------------------------------------------
     now_dt = datetime.now(eat_tz)
     cooldown_active = False
     mins_since_last = 0.0
-    if st.session_state.last_signal_time:
+
+    if st.session_state.last_signal_time and cooldown_period_mins > 0:
         mins_since_last = (now_dt - st.session_state.last_signal_time).total_seconds() / 60.0
         if mins_since_last < cooldown_period_mins:
             cooldown_active = True
 
     signal = "NO TRADE ⚪"
-    reason = risk_reason if not risk_passed else "Awaiting threshold confluence."
+    reason = risk_reason
     tp1, tp2, sl = 0.0, 0.0, 0.0
 
     if cooldown_active:
         signal = "COOLDOWN ⏳"
-        reason = f"System buffer active after recent entry. Unlocks in {int(cooldown_period_mins - mins_since_last)}m."
-    elif risk_passed and confidence_pct >= min_confluence_cutoff:
-        if "BULLISH" in valid_setup and "BULLISH" in regime:
+        reason = f"Cooldown lock active. Next entry allowed in {int(cooldown_period_mins - mins_since_last)}m."
+    elif risk_passed and valid_setup != "NONE":
+        if "BULLISH" in valid_setup:
             signal = "BUY EXECUTE 🚀"
-            reason = f"Market Setup Verified ({valid_setup}) + {regime} + Risk Approved."
+            reason = f"Direct Setup Signal ({valid_setup}) | Regime: {regime}"
             sl = proposed_sl
             tp1 = proposed_tp
             tp2 = price + (atr_val * (tp1_mult * 1.6))
             st.session_state.last_signal_time = now_dt
-        elif "BEARISH" in valid_setup and "BEARISH" in regime:
+            
+            if enable_mt5:
+                send_mt5_order(selected_asset, "BUY", mt5_lot_size, sl, tp1)
+
+        elif "BEARISH" in valid_setup:
             signal = "SELL EXECUTE 📉"
-            reason = f"Market Setup Verified ({valid_setup}) + {regime} + Risk Approved."
+            reason = f"Direct Setup Signal ({valid_setup}) | Regime: {regime}"
             sl = proposed_sl
             tp1 = proposed_tp
             tp2 = price - (atr_val * (tp1_mult * 1.6))
             st.session_state.last_signal_time = now_dt
+
+            if enable_mt5:
+                send_mt5_order(selected_asset, "SELL", mt5_lot_size, sl, tp1)
 
     # Log Execution Signals
     now_str = now_dt.strftime("%H:%M:%S")
@@ -355,7 +406,6 @@ if not data.empty:
                 "status": "ACTIVE 🟡"
             })
             
-            # Record Feature Vector for Machine Learning Pipeline
             st.session_state.ml_dataset.append({
                 "timestamp": now_str,
                 "price": price,
@@ -369,7 +419,7 @@ if not data.empty:
                 "signal": signal
             })
 
-    # Update Active Signal Statuses vs Current Market Price
+    # Update Active Signal Statuses
     for sig in st.session_state.signal_history:
         if sig["status"] == "ACTIVE 🟡" and sig["asset"] == selected_asset:
             if "BUY" in sig["type"]:
@@ -383,18 +433,18 @@ if not data.empty:
                 elif price >= sig["sl"]:
                     sig["status"] = "LOSS (SL Hit) ❌"
 
-    # Top Metric Dashboard
+    # Dashboard Metrics
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Live Market Price", f"${price:.{curr_info['dec']}f}")
-    c2.metric("Detected Regime", regime)
-    c3.metric("Signal Status", signal)
-    c4.metric("Take Profit (Target)", f"${tp1:.{curr_info['dec']}f}" if tp1 else "N/A")
-    c5.metric("Stop Loss (Safety)", f"${sl:.{curr_info['dec']}f}" if sl else "N/A")
+    c1.metric("Live Price", f"${price:.{curr_info['dec']}f}")
+    c2.metric("Market Regime", regime)
+    c3.metric("Signal Output", signal)
+    c4.metric("Take Profit (TP1)", f"${tp1:.{curr_info['dec']}f}" if tp1 else "N/A")
+    c5.metric("Stop Loss (SL)", f"${sl:.{curr_info['dec']}f}" if sl else "N/A")
 
-    st.info(f"💡 **Decision Engine Status:** {reason} | **Setup Detected:** {setup_description}")
+    st.info(f"💡 **Engine Decision:** {reason} | **Structure:** {setup_description}")
 
 # ---------------------------------------------------------
-# 6. TRADINGVIEW LIVE CHART ENGINE
+# 6. LIVE TRADINGVIEW CHART
 # ---------------------------------------------------------
 st.divider()
 col_chart, col_side = st.columns([3, 1])
@@ -403,7 +453,7 @@ tv_interval_map = {"1m": "1", "5m": "5", "15m": "15", "1h": "60"}
 tv_interval = tv_interval_map.get(interval, "5")
 
 with col_chart:
-    st.subheader(f"📊 Live Trading Chart ({selected_asset})")
+    st.subheader(f"📊 Real-Time Chart ({selected_asset})")
     tv_html = f"""
     <div class="tradingview-widget-container" style="height:520px;width:100%">
       <div id="tv_chart_container" style="height:520px;width:100%"></div>
@@ -428,7 +478,7 @@ with col_chart:
     components.html(tv_html, height=530)
 
 # ---------------------------------------------------------
-# 7. SIGNAL HISTORY LOG & ACCURACY TRACKER
+# 7. TRADE JOURNAL & ACCURACY
 # ---------------------------------------------------------
 with col_side:
     st.subheader("📋 Trade Journal")
@@ -447,20 +497,16 @@ with col_side:
         total_closed = len(history_df[~history_df["status"].str.contains("ACTIVE")])
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
         
-        st.metric("Win-Rate (Current Session)", f"{win_rate:.1f}%", f"{wins}/{total_closed} Profit Hit")
-        
-        try:
-            st.dataframe(history_df, use_container_width=True)
-        except Exception:
-            st.dataframe(history_df)
+        st.metric("Session Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Targets Hit")
+        st.dataframe(history_df, use_container_width=True)
     else:
-        st.caption("No signals triggered yet. High-confluence entries will auto-log here once verified by the Decision Engine.")
+        st.caption("No trade setups triggered yet in this session.")
 
 # ---------------------------------------------------------
-# 8. ECONOMIC NEWS GUARD & HIGH-IMPACT FEED
+# 8. ECONOMIC NEWS TIMELINE
 # ---------------------------------------------------------
 st.divider()
-st.subheader("📰 Real-Time Economic Event & Macro Calendar")
+st.subheader("📰 Macro Economic News Feed")
 
 news_html = """
 <div class="tradingview-widget-container" style="width:100%; height:400px;">
