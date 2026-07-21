@@ -430,4 +430,3 @@ if not raw_data.empty:
     </div>
     """
     components.html(news_html, height=360)
-    
