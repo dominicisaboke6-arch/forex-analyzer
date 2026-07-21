@@ -2,15 +2,21 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
+from streamlit_autorefresh import st_autorefresh
 
+# Page setup
 st.set_page_config(
-    page_title="Forex & Gold Market Analyzer",
+    page_title="Forex & Gold Market Scalper",
     layout="wide"
 )
 
-st.title("📈 Forex & Gold Market Analyzer")
+# Auto-refresh app every 15 seconds for near real-time data
+st_autorefresh(interval=15000, key="datarefresh")
 
-# Instruments mapping to symbols and their appropriate decimal precision
+st.title("⚡ Forex & Gold Real-Time Scalping Analyzer")
+
+# Instruments mapping to symbols and decimal precision
 instruments = {
     "Gold (XAU/USD)": {"symbol": "GC=F", "decimals": 2},
     "EUR/USD": {"symbol": "EURUSD=X", "decimals": 4},
@@ -18,60 +24,58 @@ instruments = {
     "USD/JPY": {"symbol": "JPY=X", "decimals": 2}
 }
 
-selected = st.selectbox(
-    "Choose market",
-    list(instruments.keys())
-)
-
+selected = st.selectbox("Choose market", list(instruments.keys()))
 symbol = instruments[selected]["symbol"]
 decimals = instruments[selected]["decimals"]
 
-period = st.selectbox(
-    "Data period",
-    ["1mo", "3mo", "6mo", "1y", "2y"],
-    index=1
-)
-
+# Timeframes including Scalping options (15m, 5m, 1m)
 interval = st.selectbox(
     "Candle timeframe",
-    ["1h", "1d"],
-    index=1
+    ["1m", "5m", "15m", "1h", "1d"],
+    index=2  # Default to 15m
 )
 
-# Download candle data
+# Set period limits based on Yahoo Finance intraday constraints
+period_map = {
+    "1m": "1d",
+    "5m": "5d",
+    "15m": "1mo",
+    "1h": "1mo",
+    "1d": "1y"
+}
+period = period_map[interval]
+
+# Fetch market data
 data = yf.download(
     symbol,
     period=period,
     interval=interval,
-    auto_adjust=False
+    auto_adjust=False,
+    progress=False
 )
 
 if data.empty:
-    st.error("No market data found.")
+    st.error("No market data found. The market might be closed or data unavailable.")
     st.stop()
 
-# Fix multi-index columns if needed
 if isinstance(data.columns, pd.MultiIndex):
     data.columns = data.columns.get_level_values(0)
 
 data = data.dropna()
 
 # -----------------------------
-# INDICATORS
+# INDICATORS (EMAs & RSI)
 # -----------------------------
-
-# Moving averages
+data["EMA_9"] = data["Close"].ewm(span=9, adjust=False).mean()
 data["EMA_20"] = data["Close"].ewm(span=20, adjust=False).mean()
 data["EMA_50"] = data["Close"].ewm(span=50, adjust=False).mean()
 
-# RSI (Standard Wilder's Smoothing)
+# Fast RSI
 delta = data["Close"].diff()
 gain = delta.where(delta > 0, 0)
 loss = -delta.where(delta < 0, 0)
-
 avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
 avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
-
 rs = avg_gain / avg_loss
 data["RSI"] = 100 - (100 / (1 + rs))
 
@@ -79,142 +83,80 @@ data["RSI"] = 100 - (100 / (1 + rs))
 data["High-Low"] = data["High"] - data["Low"]
 data["High-Close"] = abs(data["High"] - data["Close"].shift())
 data["Low-Close"] = abs(data["Low"] - data["Close"].shift())
-
 data["TR"] = data[["High-Low", "High-Close", "Low-Close"]].max(axis=1)
 data["ATR"] = data["TR"].ewm(alpha=1/14, adjust=False).mean()
 
 # -----------------------------
-# CANDLE PATTERN DETECTION
+# SCALPING PREDICTOR LOGIC
 # -----------------------------
-
-def detect_candle_pattern(row):
-    candle_body = abs(row["Close"] - row["Open"])
-    upper_wick = row["High"] - max(row["Open"], row["Close"])
-    lower_wick = min(row["Open"], row["Close"]) - row["Low"]
-
-    # Doji
-    if candle_body <= (row["High"] - row["Low"]) * 0.1:
-        return "Doji"
-
-    # Bullish candle
-    if row["Close"] > row["Open"]:
-        if lower_wick > candle_body * 2:
-            return "Bullish Pin Bar"
-        return "Bullish Candle"
-
-    # Bearish candle
-    if row["Close"] < row["Open"]:
-        if upper_wick > candle_body * 2:
-            return "Bearish Pin Bar"
-        return "Bearish Candle"
-
-    return "Neutral"
-
-data["Pattern"] = data.apply(detect_candle_pattern, axis=1)
-
-# -----------------------------
-# MARKET ANALYSIS
-# -----------------------------
-
 latest = data.iloc[-1]
-
 price = float(latest["Close"])
+ema9 = float(latest["EMA_9"])
 ema20 = float(latest["EMA_20"])
 ema50 = float(latest["EMA_50"])
 rsi = float(latest["RSI"])
 
-# Trend
-if ema20 > ema50:
-    trend = "Bullish"
-elif ema20 < ema50:
-    trend = "Bearish"
-else:
-    trend = "Sideways"
+# Scalper Trigger Conditions (Momentum Crossover Strategy)
+scalp_signal = "NEUTRAL ⚪"
+scalp_reason = "Waiting for alignment."
 
-# Momentum
-if rsi >= 70:
-    momentum = "Overbought"
+if ema9 > ema20 and ema20 > ema50 and rsi > 50 and rsi < 70:
+    scalp_signal = "SCALP BUY 🚀"
+    scalp_reason = "Bullish momentum stack (EMA 9 > 20 > 50) & strong RSI health."
+elif ema9 < ema20 and ema20 < ema50 and rsi < 50 and rsi > 30:
+    scalp_signal = "SCALP SELL 📉"
+    scalp_reason = "Bearish momentum stack (EMA 9 < 20 < 50) & weakening RSI."
+elif rsi >= 70:
+    scalp_signal = "OVERBOUGHT ⚠️"
+    scalp_reason = "RSI is above 70. Look out for quick mean-reversion pullbacks."
 elif rsi <= 30:
-    momentum = "Oversold"
-else:
-    momentum = "Neutral"
+    scalp_signal = "OVERSOLD ⚠️"
+    scalp_reason = "RSI is below 30. Potential oversold bounce expected."
 
-# Overall bias
-if trend == "Bullish" and rsi < 70:
-    bias = "Bullish Bias"
-elif trend == "Bearish" and rsi > 30:
-    bias = "Bearish Bias"
-else:
-    bias = "Wait / Mixed Conditions"
-
-# Support & Resistance
-support = data["Low"].rolling(20).min().iloc[-1]
-resistance = data["High"].rolling(20).max().iloc[-1]
-
-# -----------------------------
-# DISPLAY
-# -----------------------------
-
-st.subheader(f"{selected} Analysis")
-
+# Metrics Bar
 col1, col2, col3, col4 = st.columns(4)
-
 col1.metric("Current Price", f"{price:.{decimals}f}")
-col2.metric("Trend", trend)
-col3.metric("RSI", f"{rsi:.2f}")
-col4.metric("Market Bias", bias)
+col2.metric("RSI (14)", f"{rsi:.1f}")
+col3.metric("Scalp Signal", scalp_signal)
+col4.metric("Timeframe", interval)
 
+st.info(f"**Scalp Insight:** {scalp_reason}")
 st.divider()
 
-# Chart
-st.subheader("Price Chart")
-chart_data = data[["Close", "EMA_20", "EMA_50"]].dropna()
-st.line_chart(chart_data)
-
-# Analysis table
-st.subheader("Technical Analysis")
-
-analysis = {
-    "Trend": trend,
-    "Momentum": momentum,
-    "Latest Candle": latest["Pattern"],
-    "Support": f"{support:.{decimals}f}",
-    "Resistance": f"{resistance:.{decimals}f}",
-    "ATR Volatility": f"{latest['ATR']:.{decimals}f}",
-    "RSI": f"{rsi:.2f}"
-}
-
-df_analysis = pd.DataFrame(analysis.items(), columns=["Metric", "Value"])
-st.dataframe(df_analysis, hide_index=True, use_container_width=True)
-
 # -----------------------------
-# SIMPLE TRADE SCENARIOS
+# REAL-TIME CANDLESTICK CHART
 # -----------------------------
-st.subheader("Market Scenario")
+st.subheader("Interactive Real-Time Chart")
 
-if bias == "Bullish Bias":
-    st.success(
-        f"""
-        **The market is showing bullish conditions.**  
-        Price is trading with the 20 EMA above the 50 EMA. 
-        A possible bullish scenario would be a pullback toward support around **{support:.{decimals}f}** followed by bullish confirmation.
-        
-        *This is analysis only, not a guaranteed trade signal.*
-        """
-    )
-elif bias == "Bearish Bias":
-    st.error(
-        f"""
-        **The market is showing bearish conditions.**  
-        Price is trading with the 20 EMA below the 50 EMA. 
-        A possible bearish scenario would be a retracement toward resistance around **{resistance:.{decimals}f}** followed by bearish confirmation.
-        
-        *This is analysis only, not a guaranteed trade signal.*
-        """
-    )
-else:
-    st.warning("Market conditions are mixed. It may be better to wait for clearer trend confirmation.")
+fig = go.Figure()
 
-# Raw candle data
-with st.expander("View Raw Candle Data"):
-    st.dataframe(data.tail(50))
+# Add Candlesticks
+fig.add_trace(
+    go.Candlestick(
+        x=data.index,
+        open=data['Open'],
+        high=data['High'],
+        low=data['Low'],
+        close=data['Close'],
+        name='Price'
+    )
+)
+
+# Add EMA Overlays
+fig.add_trace(go.Scatter(x=data.index, y=data['EMA_9'], line=dict(color='yellow', width=1), name='EMA 9'))
+fig.add_trace(go.Scatter(x=data.index, y=data['EMA_20'], line=dict(color='orange', width=1.5), name='EMA 20'))
+fig.add_trace(go.Scatter(x=data.index, y=data['EMA_50'], line=dict(color='cyan', width=1.5), name='EMA 50'))
+
+# Dark Theme & Responsive Layout
+fig.update_layout(
+    template="plotly_dark",
+    xaxis_rangeslider_visible=False,
+    height=550,
+    margin=dict(l=10, r=10, t=30, b=10)
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# Raw Candle Data
+with st.expander("View Recent Scalping Data"):
+    st.dataframe(data.tail(20)[["Open", "High", "Low", "Close", "EMA_9", "EMA_20", "RSI"]])
