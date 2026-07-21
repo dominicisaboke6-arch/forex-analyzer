@@ -8,8 +8,7 @@ from datetime import datetime
 import pytz
 
 # Page configuration
-st.set_page_config(
-    # Refresh the Python signal engine every 15 seconds (15000 ms)
+st.set_page_config( # Refresh the Python signal engine every 15 seconds (15000 ms)
 st_autorefresh(interval=15000, key="minion_autorefresh")
     page_title="Minion - Pro Gold & Forex Scanner",
     page_icon="⚡",
