@@ -1,3 +1,4 @@
+from streamlit_autorefresh import st_autorefresh
 import streamlit as st
 import streamlit.components.v1 as components
 import yfinance as yf
@@ -8,6 +9,8 @@ import pytz
 
 # Page configuration
 st.set_page_config(
+    # Refresh the Python signal engine every 15 seconds (15000 ms)
+st_autorefresh(interval=15000, key="minion_autorefresh")
     page_title="Minion - Pro Gold & Forex Scanner",
     page_icon="⚡",
     layout="wide",
