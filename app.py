@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -7,159 +8,163 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 import pytz
 
-# Page configuration
+# Page setup
 st.set_page_config(
-    page_title="Forex & Gold Live EAT Scalper",
+    page_title="Forex & Gold Real-Time Scalper",
     layout="wide"
 )
 
-# Auto-refresh app every 5 seconds for fast real-time updates
-st_autorefresh(interval=5000, key="eat_refresh")
+# Auto-refresh every 15 seconds to update Python signals
+st_autorefresh(interval=15000, key="datarefresh")
 
-# Timezone Handling for East Africa Time (EAT)
+# Timezone setup for East Africa Time (EAT)
 eat_tz = pytz.timezone("Africa/Nairobi")
 eat_now = datetime.now(eat_tz)
 formatted_eat_time = eat_now.strftime("%Y-%m-%d %H:%M:%S")
 
-st.title("⚡ Forex & Gold Real-Time Scalper")
-st.caption(f"🕒 **Current East Africa Time (EAT):** `{formatted_eat_time} EAT`")
+st.title("⚡ Real-Time Forex & Gold Scalping Analyzer")
+st.caption(f"🕒 **Current Local Time:** `{formatted_eat_time} EAT`")
 
-# Updated instrument definitions mapped directly to SPOT Forex/Gold prices
+# Instruments mapping (Python ticker fallback list : TradingView symbol)
 instruments = {
-    "Gold (Spot XAU/USD)": {"symbol": "XAUUSD=X", "decimals": 2},
-    "EUR/USD": {"symbol": "EURUSD=X", "decimals": 4},
-    "GBP/USD": {"symbol": "GBPUSD=X", "decimals": 4},
-    "USD/JPY": {"symbol": "JPY=X", "decimals": 2}
+    "Gold (Spot XAU/USD)": {
+        "yf_tickers": ["GC=F", "XAUUSD=X"],
+        "tv_symbol": "OANDA:XAUUSD"
+    },
+    "EUR/USD": {
+        "yf_tickers": ["EURUSD=X"],
+        "tv_symbol": "FX:EURUSD"
+    },
+    "GBP/USD": {
+        "yf_tickers": ["GBPUSD=X"],
+        "tv_symbol": "FX:GBPUSD"
+    },
+    "USD/JPY": {
+        "yf_tickers": ["JPY=X", "USDJPY=X"],
+        "tv_symbol": "FX:USDJPY"
+    }
 }
 
-selected = st.selectbox("Choose market", list(instruments.keys()))
-symbol = instruments[selected]["symbol"]
-decimals = instruments[selected]["decimals"]
+col_m, col_t = st.columns([2, 1])
+with col_m:
+    selected = st.selectbox("Choose Asset", list(instruments.keys()))
+with col_t:
+    interval = st.selectbox("Signal Timeframe", ["1m", "5m", "15m", "1h"], index=0)
 
-# Timeframes
-interval = st.selectbox(
-    "Candle timeframe",
-    ["1m", "5m", "15m", "1h", "1d"],
-    index=0  # Default to 1m for scalping
-)
+yf_tickers = instruments[selected]["yf_tickers"]
+tv_symbol = instruments[selected]["tv_symbol"]
 
-# Determine period based on timeframe limits
-period_map = {
-    "1m": "1d",
-    "5m": "5d",
-    "15m": "1mo",
-    "1h": "1mo",
-    "1d": "1y"
-}
+# Map period for Yahoo Finance
+period_map = {"1m": "1d", "5m": "5d", "15m": "1mo", "1h": "1mo"}
 period = period_map[interval]
 
-# Fetch market data
-data = yf.download(
-    symbol,
-    period=period,
-    interval=interval,
-    auto_adjust=False,
-    progress=False
-)
+# -----------------------------
+# FETCH DATA WITH FALLBACK
+# -----------------------------
+data = pd.DataFrame()
+for ticker in yf_tickers:
+    try:
+        df = yf.download(
+            ticker,
+            period=period,
+            interval=interval,
+            auto_adjust=False,
+            progress=False
+        )
+        if not df.empty:
+            data = df
+            break
+    except Exception:
+        continue
 
 if data.empty:
-    st.error("Market data currently unavailable or the market is closed.")
-    st.stop()
-
-if isinstance(data.columns, pd.MultiIndex):
-    data.columns = data.columns.get_level_values(0)
-
-data = data.dropna()
-
-# Convert Index to East Africa Time (EAT) for chart alignment
-if data.index.tz is None:
-    data.index = data.index.tz_localize("UTC").tz_convert(eat_tz)
+    st.warning("⚠️ Data syncing... The chart below remains live.")
 else:
-    data.index = data.index.tz_convert(eat_tz)
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+    data = data.dropna()
 
-# -----------------------------
-# INDICATORS (EMA & RSI)
-# -----------------------------
-data["EMA_9"] = data["Close"].ewm(span=9, adjust=False).mean()
-data["EMA_20"] = data["Close"].ewm(span=20, adjust=False).mean()
-data["EMA_50"] = data["Close"].ewm(span=50, adjust=False).mean()
+    # Convert Index to EAT Timezone
+    if data.index.tz is None:
+        data.index = data.index.tz_localize("UTC").tz_convert(eat_tz)
+    else:
+        data.index = data.index.tz_convert(eat_tz)
 
-# RSI (Standard Wilder's)
-delta = data["Close"].diff()
-gain = delta.where(delta > 0, 0)
-loss = -delta.where(delta < 0, 0)
-avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
-avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
-rs = avg_gain / avg_loss
-data["RSI"] = 100 - (100 / (1 + rs))
+    # -----------------------------
+    # INDICATORS & SCALPER LOGIC
+    # -----------------------------
+    data["EMA_9"] = data["Close"].ewm(span=9, adjust=False).mean()
+    data["EMA_20"] = data["Close"].ewm(span=20, adjust=False).mean()
+    data["EMA_50"] = data["Close"].ewm(span=50, adjust=False).mean()
 
-# -----------------------------
-# SCALPING PREDICTOR
-# -----------------------------
-latest = data.iloc[-1]
-price = float(latest["Close"])
-ema9 = float(latest["EMA_9"])
-ema20 = float(latest["EMA_20"])
-ema50 = float(latest["EMA_50"])
-rsi = float(latest["RSI"])
+    # RSI Calculation
+    delta = data["Close"].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.ewm(alpha=1/14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/14, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    data["RSI"] = 100 - (100 / (1 + rs))
 
-# Signal Generation
-scalp_signal = "NEUTRAL ⚪"
-scalp_reason = "Waiting for moving averages alignment."
+    # Signal Evaluation
+    latest = data.iloc[-1]
+    price = float(latest["Close"])
+    ema9 = float(latest["EMA_9"])
+    ema20 = float(latest["EMA_20"])
+    ema50 = float(latest["EMA_50"])
+    rsi = float(latest["RSI"])
 
-if ema9 > ema20 and ema20 > ema50 and rsi > 50 and rsi < 70:
-    scalp_signal = "SCALP BUY 🚀"
-    scalp_reason = "Bullish Stack (EMA 9 > 20 > 50) & Strong RSI."
-elif ema9 < ema20 and ema20 < ema50 and rsi < 50 and rsi > 30:
-    scalp_signal = "SCALP SELL 📉"
-    scalp_reason = "Bearish Stack (EMA 9 < 20 < 50) & Weakening RSI."
-elif rsi >= 70:
-    scalp_signal = "OVERBOUGHT ⚠️"
-    scalp_reason = "RSI > 70. Watch out for a pull back down."
-elif rsi <= 30:
-    scalp_signal = "OVERSOLD ⚠️"
-    scalp_reason = "RSI < 30. Watch out for a bounce back up."
+    scalp_signal = "NEUTRAL ⚪"
+    scalp_reason = "Waiting for EMA alignment."
 
-# Metric dashboard
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Live Spot Price", f"{price:.{decimals}f}")
-col2.metric("RSI (14)", f"{rsi:.1f}")
-col3.metric("Scalp Signal", scalp_signal)
-col4.metric("Timeframe", interval)
+    if ema9 > ema20 and ema20 > ema50 and 50 < rsi < 70:
+        scalp_signal = "SCALP BUY 🚀"
+        scalp_reason = "Bullish stack (EMA 9 > 20 > 50) + healthy RSI momentum."
+    elif ema9 < ema20 and ema20 < ema50 and 30 < rsi < 50:
+        scalp_signal = "SCALP SELL 📉"
+        scalp_reason = "Bearish stack (EMA 9 < 20 < 50) + weakening RSI momentum."
+    elif rsi >= 70:
+        scalp_signal = "OVERBOUGHT ⚠️"
+        scalp_reason = "RSI >= 70. Watch for potential pullbacks."
+    elif rsi <= 30:
+        scalp_signal = "OVERSOLD ⚠️"
+        scalp_reason = "RSI <= 30. Watch for potential oversold bounces."
 
-st.info(f"**Scalp Insight:** {scalp_reason}")
+    # Top Metrics Bar
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Ref Spot Price", f"${price:.2f}")
+    m2.metric("RSI (14)", f"{rsi:.1f}")
+    m3.metric("Scalp Signal", scalp_signal)
+    m4.metric("Timeframe", interval)
+
+    st.info(f"💡 **Scalp Insight:** {scalp_reason}")
+
 st.divider()
 
 # -----------------------------
-# CANDLESTICK CHART (EAT STAMPED)
+# TRADINGVIEW LIVE WIDGET
 # -----------------------------
-st.subheader("Real-Time Candlestick Chart (EAT Timezone)")
+st.subheader("📊 Live TradingView Chart")
 
-fig = go.Figure()
-
-fig.add_trace(
-    go.Candlestick(
-        x=data.index,
-        open=data['Open'],
-        high=data['High'],
-        low=data['Low'],
-        close=data['Close'],
-        name='Price'
-    )
-)
-
-fig.add_trace(go.Scatter(x=data.index, y=data['EMA_9'], line=dict(color='yellow', width=1), name='EMA 9'))
-fig.add_trace(go.Scatter(x=data.index, y=data['EMA_20'], line=dict(color='orange', width=1.5), name='EMA 20'))
-fig.add_trace(go.Scatter(x=data.index, y=data['EMA_50'], line=dict(color='cyan', width=1.5), name='EMA 50'))
-
-fig.update_layout(
-    template="plotly_dark",
-    xaxis_rangeslider_visible=False,
-    height=550,
-    margin=dict(l=10, r=10, t=20, b=10)
-)
-
-st.plotly_chart(fig, use_container_width=True)
-
-with st.expander("View Recent EAT Scalp Data"):
-    st.dataframe(data.tail(15)[["Open", "High", "Low", "Close", "EMA_9", "EMA_20", "RSI"]])
+tv_html = f"""
+<div class="tradingview-widget-container" style="height:550px;width:100%">
+  <div id="tv_chart" style="height:550px;width:100%"></div>
+  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+  <script type="text/javascript">
+  new TradingView.widget({{
+    "autosize": true,
+    "symbol": "{tv_symbol}",
+    "interval": "1",
+    "timezone": "Africa/Nairobi",
+    "theme": "dark",
+    "style": "1",
+    "locale": "en",
+    "toolbar_bg": "#f1f3f6",
+    "enable_publishing": false,
+    "allow_symbol_change": true,
+    "container_id": "tv_chart"
+  }});
+  </script>
+</div>
+"""
+components.html(tv_html, height=560)
