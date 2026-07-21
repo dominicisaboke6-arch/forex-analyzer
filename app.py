@@ -8,7 +8,7 @@ import pytz
 
 # Page setup - Dark Theme AURUM inspired
 st.set_page_config(
-    page_title="AURUM - Pro XAU/USD Scanner",
+    page_title="MINION - Pro XAU/USD Scanner",
     layout="wide",
     initial_sidebar_state="expanded"
 )
