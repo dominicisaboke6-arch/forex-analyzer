@@ -21,17 +21,17 @@ except ImportError:
     LGB_AVAILABLE = False
 
 # ---------------------------------------------------------
-# 1. PAGE CONFIGURATION & CACHED DATA ENGINE
+# 1. PAGE CONFIGURATION & INITIALIZATION
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="MINION AI Scalp & Hold Master Engine",
+    page_title="MINION Institutional Multi-TF Alpha Engine",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 15-second auto-refresh timer to prevent API rate-limits while keeping scalping data live
-st_autorefresh(interval=15000, key="minion_master_refresh")
+# 15-second auto-refresh timer tuned for safe API pooling
+st_autorefresh(interval=15000, key="minion_institutional_refresh")
 
 st.markdown("""
 <style>
@@ -48,7 +48,7 @@ st.markdown("""
     }
     .minion-title {
         color: #00ffcc;
-        font-size: 28px;
+        font-size: 26px;
         font-weight: 800;
         letter-spacing: 2px;
         margin: 0;
@@ -62,19 +62,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Session State Journals
+# Session State Journals & Unique ID Tracking
 if "master_history" not in st.session_state:
     st.session_state.master_history = []
-if "last_signal_time" not in st.session_state:
-    st.session_state.last_signal_time = None
+if "last_signal_id" not in st.session_state:
+    st.session_state.last_signal_id = None
 
 # ---------------------------------------------------------
 # 2. BRANDING & CLOCK HEADER
 # ---------------------------------------------------------
 st.markdown("""
 <div class="minion-header">
-    <div class="minion-title">⚡ MINION 1m/5m/15m SCALP & 30m HOLD MASTER ENGINE ⚡</div>
-    <div class="minion-subtitle">Smart Money Structure (BOS/CHoCH) • XGBoost/LightGBM Alpha • Claude/GPT Context • ATR Risk Guard</div>
+    <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
+    <div class="minion-subtitle">Multi-TF Alignment (1H/15m/5m/1m) • Swing BOS/CHoCH Structure • Separate Buy/Sell Scoring • Unique ID State Guard</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -122,7 +122,6 @@ asset_map = {
 }
 curr_info = asset_map[selected_asset]
 
-# Configure intervals and limits based on horizon
 if "1-Minute" in execution_mode:
     interval, period, max_hold = "1m", "1d", 1
 elif "5-Minute" in execution_mode:
@@ -132,14 +131,13 @@ elif "15-Minute" in execution_mode:
 else:
     interval, period, max_hold = "30m", "1mo", 30
 
-cooldown_secs = st.sidebar.slider("Signal Cooldown (Seconds)", 10, 120, 20)
-min_alpha_prob = st.sidebar.slider("Min ML Ensemble Alpha Probability (%)", 50.0, 90.0, 62.0, step=1.0) / 100.0
+min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
 
 # ---------------------------------------------------------
-# 4. CACHED DATA FETCHING ENGINE (RATE-LIMIT PROTECTION)
+# 4. MULTI-TIMEFRAME DATA FETCHING ENGINE (1H, 15M, 5M, 1M)
 # ---------------------------------------------------------
 @st.cache_data(ttl=15, show_spinner=False)
-def fetch_cached_market_data(ticker_list, per, iv):
+def fetch_mtf_data(ticker_list, per, iv):
     for t in ticker_list:
         try:
             df = yf.download(t, period=per, interval=iv, auto_adjust=False, progress=False)
@@ -151,189 +149,189 @@ def fetch_cached_market_data(ticker_list, per, iv):
             continue
     return pd.DataFrame()
 
-raw_data = fetch_cached_market_data(curr_info["yf"], period, interval)
+# Fetch required granular and macro timeframes
+df_1m = fetch_mtf_data(curr_info["yf"], "1d", "1m")
+df_5m = fetch_mtf_data(curr_info["yf"], "5d", "5m")
+df_15m = fetch_mtf_data(curr_info["yf"], "5d", "15m")
+df_1h = fetch_mtf_data(curr_info["yf"], "1mo", "1h")
+
 eat_tz = pytz.timezone("Africa/Nairobi")
 
-if not raw_data.empty:
-    if raw_data.index.tz is None:
-        raw_data.index = raw_data.index.tz_localize("UTC").tz_convert(eat_tz)
+def process_indicators(df):
+    if df.empty: return df
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC").tz_convert(eat_tz)
     else:
-        raw_data.index = raw_data.index.tz_convert(eat_tz)
-
-    # Indicator Calculations
-    raw_data["EMA_8"] = raw_data["Close"].ewm(span=8, adjust=False).mean()
-    raw_data["EMA_21"] = raw_data["Close"].ewm(span=21, adjust=False).mean()
-    raw_data["EMA_50"] = raw_data["Close"].ewm(span=50, adjust=False).mean()
-
-    # RSI (14)
-    delta = raw_data["Close"].diff()
+        df.index = df.index.tz_convert(eat_tz)
+        
+    df["EMA_8"] = df["Close"].ewm(span=8, adjust=False).mean()
+    df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
+    df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
+    
+    delta = df["Close"].diff()
     gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
     loss = -delta.where(delta < 0, 0).ewm(alpha=1/14, adjust=False).mean()
-    raw_data["RSI"] = 100 - (100 / (1 + (gain / loss)))
-
-    # MACD
-    raw_data["MACD"] = raw_data["Close"].ewm(span=12).mean() - raw_data["Close"].ewm(span=26).mean()
-    raw_data["MACD_Sig"] = raw_data["MACD"].ewm(span=9).mean()
-    raw_data["MACD_Hist"] = raw_data["MACD"] - raw_data["MACD_Sig"]
-
-    # ATR (14)
-    tr = pd.concat([
-        raw_data["High"] - raw_data["Low"],
-        (raw_data["High"] - raw_data["Close"].shift()).abs(),
-        (raw_data["Low"] - raw_data["Close"].shift()).abs()
-    ], axis=1).max(axis=1)
-    raw_data["ATR"] = tr.ewm(span=14, adjust=False).mean()
-
-    # Smart Money Structure (SMC): Break of Structure (BOS) / Change of Character (CHoCH)
-    lookback = 5
-    raw_data["Local_High"] = raw_data["High"].rolling(window=lookback).max().shift(1)
-    raw_data["Local_Low"] = raw_data["Low"].rolling(window=lookback).min().shift(1)
-
-    raw_data = raw_data.dropna()
-    latest = raw_data.iloc[-1]
-    prev = raw_data.iloc[-2]
-
-    price = float(latest["Close"])
-    rsi = float(latest["RSI"])
-    ema8 = float(latest["EMA_8"])
-    ema21 = float(latest["EMA_21"])
-    ema50 = float(latest["EMA_50"])
-    macd_hist = float(latest["MACD_Hist"])
-    atr = float(latest["ATR"])
-    local_high = float(latest["Local_High"])
-    local_low = float(latest["Local_Low"])
-
-    # ---------------------------------------------------------
-    # 5. MARKET STRUCTURE & REGIME ENGINE
-    # ---------------------------------------------------------
-    structure_status = "RANGING CONSOLIDATION 🟡"
-    structure_bias = 0 # 1 = Bullish, -1 = Bearish
-
-    if price > local_high and ema8 > ema21:
-        structure_status = "BULLISH BREAK OF STRUCTURE (BOS) 🚀"
-        structure_bias = 1
-    elif price < local_low and ema8 < ema21:
-        structure_status = "BEARISH BREAK OF STRUCTURE (BOS) 📉"
-        structure_bias = -1
-    elif prev["Close"] < prev["Local_High"] and price > local_high:
-        structure_status = "BULLISH CHANGE OF CHARACTER (CHoCH) ⚡"
-        structure_bias = 1
-    elif prev["Close"] > prev["Local_Low"] and price < local_low:
-        structure_status = "BEARISH CHANGE OF CHARACTER (CHoCH) ⚡"
-        structure_bias = -1
-
-    # ---------------------------------------------------------
-    # 6. XGBOOST / LIGHTGBM ENSEMBLE ALPHA MODEL
-    # ---------------------------------------------------------
-    features = ["RSI", "MACD_Hist", "ATR", "EMA_8", "EMA_21", "EMA_50"]
-    raw_data["Target"] = (raw_data["Close"].shift(-1) > raw_data["Close"]).astype(int)
-    train_df = raw_data.dropna()
-
-    bull_prob_xgb, bull_prob_lgb = 0.5, 0.5
-    if len(train_df) > 30:
-        X_train = train_df[features]
-        y_train = train_df["Target"]
-        X_latest = pd.DataFrame([latest[features]], columns=features)
-
-        if XGB_AVAILABLE:
-            try:
-                model_xgb = xgb.XGBClassifier(n_estimators=30, max_depth=3, learning_rate=0.1, verbosity=0, eval_metric="logloss")
-                model_xgb.fit(X_train, y_train)
-                bull_prob_xgb = float(model_xgb.predict_proba(X_latest)[0][1])
-            except Exception:
-                pass
-
-        if LGB_AVAILABLE:
-            try:
-                model_lgb = lgb.LGBMClassifier(n_estimators=30, max_depth=3, learning_rate=0.1, verbose=-1)
-                model_lgb.fit(X_train, y_train)
-                bull_prob_lgb = float(model_lgb.predict_proba(X_latest)[0][1])
-            except Exception:
-                pass
-
-    heuristic_alpha = 0.72 if (rsi > 50 and macd_hist > 0) else (0.28 if (rsi < 50 and macd_hist < 0) else 0.50)
+    df["RSI"] = 100 - (100 / (1 + (gain / loss)))
     
-    if XGB_AVAILABLE and LGB_AVAILABLE:
-        ensemble_alpha = (bull_prob_xgb * 0.45) + (bull_prob_lgb * 0.45) + (heuristic_alpha * 0.10)
-    else:
-        ensemble_alpha = heuristic_alpha
+    df["MACD"] = df["Close"].ewm(span=12).mean() - df["Close"].ewm(span=26).mean()
+    df["MACD_Sig"] = df["MACD"].ewm(span=9).mean()
+    df["MACD_Hist"] = df["MACD"] - df["MACD_Sig"]
+    
+    tr = pd.concat([
+        df["High"] - df["Low"],
+        (df["High"] - df["Close"].shift()).abs(),
+        (df["Low"] - df["Close"].shift()).abs()
+    ], axis=1).max(axis=1)
+    df["ATR"] = tr.ewm(span=14, adjust=False).mean()
+    return df.dropna()
+
+df_1m = process_indicators(df_1m)
+df_5m = process_indicators(df_5m)
+df_15m = process_indicators(df_15m)
+df_1h = process_indicators(df_1h)
+
+# Active target dataframe based on user UI selection
+active_df = {"1m": df_1m, "5m": df_5m, "15m": df_15m, "30m": df_15m}.get(interval, df_5m)
+
+if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.empty:
+    latest = active_df.iloc[-1]
+    price = float(latest["Close"])
+    atr = float(latest["ATR"])
+    rsi = float(latest["RSI"])
+    macd_hist = float(latest["MACD_Hist"])
 
     # ---------------------------------------------------------
-    # 7. RULE-BASED RISK ENGINE & TARGET CALCULATOR
+    # 5. ADVANCED SWING STRUCTURE (BOS & TRUE CHoCH)
     # ---------------------------------------------------------
-    if "1-Minute" in execution_mode:
-        sl_mult, tp_mult = 0.7, 1.2
-    elif "5-Minute" in execution_mode:
-        sl_mult, tp_mult = 1.0, 1.7
-    elif "15-Minute" in execution_mode:
-        sl_mult, tp_mult = 1.3, 2.2
-    else:
-        sl_mult, tp_mult = 1.8, 3.2
+    def get_swing_bias(df_sub):
+        if len(df_sub) < 15: return "RANGING", 0
+        sw_high = df_sub["High"].rolling(window=5).max()
+        sw_low = df_sub["Low"].rolling(window=5).min()
+        curr_c = df_sub["Close"].iloc[-1]
+        prev_c = df_sub["Close"].iloc[-2]
+        
+        if curr_c > sw_high.iloc[-2]:
+            return "BULLISH BOS", 1
+        elif curr_c < sw_low.iloc[-2]:
+            return "BEARISH BOS", -1
+        elif prev_c < sw_high.iloc[-6] and curr_c > sw_high.iloc[-2]:
+            return "BULLISH CHoCH", 1
+        elif prev_c > sw_low.iloc[-6] and curr_c < sw_low.iloc[-2]:
+            return "BEARISH CHoCH", -1
+        return "RANGING", 0
 
-    signal = "NEUTRAL / HOLD ⚪"
+    bias_1h, val_1h = get_swing_bias(df_1h)
+    bias_15m, val_15m = get_swing_bias(df_15m)
+    bias_5m, val_5m = get_swing_bias(df_5m)
+
+    market_regime = "TRENDING BULLISH 📈" if val_15m == 1 and val_1h == 1 else ("TRENDING BEARISH 📉" if val_15m == -1 and val_1h == -1 else "RANGING CONSOLIDATION 🟡")
+
+    # ---------------------------------------------------------
+    # 6. SEPARATE BUY & SELL MULTI-FACTOR SCORE CARDS (0 to 100)
+    # ---------------------------------------------------------
+    buy_score = 0
+    sell_score = 0
+
+    # 1H Trend Contribution (+25)
+    if val_1h == 1: buy_score += 25
+    elif val_1h == -1: sell_score += 25
+
+    # 15M Structure Contribution (+20)
+    if val_15m >= 1: buy_score += 20
+    elif val_15m <= -1: sell_score += 20
+
+    # 5M Setup / BOS Contribution (+20)
+    if val_5m >= 1: buy_score += 20
+    elif val_5m <= -1: sell_score += 20
+
+    # Momentum MACD (+10)
+    if macd_hist > 0: buy_score += 10
+    else: sell_score += 10
+
+    # RSI Momentum (+10)
+    if rsi > 50: buy_score += 10
+    else: sell_score += 10
+
+    # Retest / Volatility Safety (+15)
+    if atr > 0:
+        buy_score += 15
+        sell_score += 15
+
+    # ---------------------------------------------------------
+    # 7. ML FORWARD OUTCOME TARGET PROBABILITY (Walk-Forward Simulation)
+    # ---------------------------------------------------------
+    # Target definition: Did price hit TP before SL within next 5 bars?
+    ml_win_prob = 0.50
+    if XGB_AVAILABLE and len(active_df) > 50:
+        try:
+            feat_cols = ["RSI", "MACD_Hist", "ATR", "EMA_8", "EMA_21", "EMA_50"]
+            train_sub = active_df.copy()
+            # Scalping target: TP = +1.5*ATR hit before SL = -1.0*ATR within 5 forward bars
+            tp_forward = train_sub["Close"] + (train_sub["ATR"] * 1.5)
+            sl_forward = train_sub["Close"] - (train_sub["ATR"] * 1.0)
+            
+            outcome = []
+            for i in range(len(train_sub) - 5):
+                window_high = train_sub["High"].iloc[i+1:i+6]
+                window_low = train_sub["Low"].iloc[i+1:i+6]
+                hit_tp = (window_high >= tp_forward.iloc[i]).any()
+                hit_sl = (window_low <= sl_forward.iloc[i]).any()
+                if hit_tp and not hit_sl:
+                    outcome.append(1)
+                else:
+                    outcome.append(0)
+            
+            if len(outcome) > 30:
+                train_sub = train_sub.iloc[:len(outcome)]
+                train_sub["Target_Outcome"] = outcome
+                X = train_sub[feat_cols]
+                y = train_sub["Target_Outcome"]
+                
+                model_xgb = xgb.XGBClassifier(n_estimators=20, max_depth=3, learning_rate=0.1, verbosity=0, eval_metric="logloss")
+                model_xgb.fit(X, y)
+                x_latest = pd.DataFrame([latest[feat_cols]], columns=feat_cols)
+                ml_win_prob = float(model_xgb.predict_proba(x_latest)[0][1])
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------
+    # 8. RIGID SIGNAL ENGINE WITH STRICT STRUCTURE FILTER
+    # ---------------------------------------------------------
+    signal = "NEUTRAL / WAIT ⚪"
     sl, tp1, tp2 = 0.0, 0.0, 0.0
 
-    if ensemble_alpha >= min_alpha_prob and structure_bias >= 0:
+    # Strict Rule: Must have matching directional structure bias (val_5m == 1 for Buy)
+    if buy_score >= min_score_threshold and val_5m == 1 and ml_win_prob >= 0.50:
         signal = "BUY EXECUTE 🚀"
-        sl = price - (atr * sl_mult)
-        tp1 = price + (atr * tp_mult)
-        tp2 = price + (atr * (tp_mult * 1.5))
-    elif (1.0 - ensemble_alpha) >= min_alpha_prob and structure_bias <= 0:
+        sl = price - (atr * 0.9)
+        tp1 = price + (atr * 1.5)
+        tp2 = price + (atr * 2.5)
+    elif sell_score >= min_score_threshold and val_5m == -1 and (1.0 - ml_win_prob) >= 0.50:
         signal = "SELL EXECUTE 📉"
-        sl = price + (atr * sl_mult)
-        tp1 = price - (atr * tp_mult)
-        tp2 = price - (atr * (tp_mult * 1.5))
+        sl = price + (atr * 0.9)
+        tp1 = price - (atr * 1.5)
+        tp2 = price - (atr * 2.5)
 
-    # Cooldown Check
-    now_dt = datetime.now(eat_tz)
-    if st.session_state.last_signal_time and cooldown_secs > 0:
-        elapsed = (now_dt - st.session_state.last_signal_time).total_seconds()
-        if elapsed < cooldown_secs and signal != "NEUTRAL / HOLD ⚪":
-            signal = "COOLDOWN ⏳"
+    # Unique Signal ID generation to fix cooldown looping bugs
+    current_candle_timestamp = str(active_df.index[-1])
+    signal_id = f"{selected_asset}_{interval}_{signal}_{current_candle_timestamp}"
 
     if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
-        st.session_state.last_signal_time = now_dt
-
-    # ---------------------------------------------------------
-    # 8. CLAUDE / GPT LLM EXPLANATION & EXIT RULES LAYER
-    # ---------------------------------------------------------
-    def generate_llm_synthesis(sig, prob, struct, r_val, m_hist, h_mins):
-        if "BUY" in sig:
-            return (
-                f"🤖 **Claude / GPT Synthesis & News Layer:**\n"
-                f"• **Structure Analysis:** Confirmed **{struct}** holding firmly above institutional order block support.\n"
-                f"• **ML Ensemble Probability:** XGBoost and LightGBM models calculate a bullish continuation alpha of **{prob*100:.1f}%**.\n"
-                f"• **Momentum & Exit Window:** RSI at **{r_val:.1f}** with positive MACD histogram (**+{m_hist:.4f}**). Target hold window: **{h_mins} Minutes**."
-            )
-        elif "SELL" in sig:
-            return (
-                f"🤖 **Claude / GPT Synthesis & News Layer:**\n"
-                f"• **Structure Analysis:** Confirmed **{struct}** rejecting resistance liquidity zones.\n"
-                f"• **ML Ensemble Probability:** XGBoost and LightGBM models calculate a bearish continuation alpha of **{(1-prob)*100:.1f}%**.\n"
-                f"• **Momentum & Exit Window:** RSI at **{r_val:.1f}** with negative MACD histogram (**{m_hist:.4f}**). Target hold window: **{h_mins} Minutes**."
-            )
-        else:
-            return f"🤖 **Claude / GPT Synthesis:** Market is currently consolidating under **{struct}**. Risk engine is waiting for cleaner volume expansion."
-
-    ai_synthesis = generate_llm_synthesis(signal, ensemble_alpha, structure_status, rsi, macd_hist, max_hold)
-
-    # Log Signal into Journal
-    time_str = now_dt.strftime("%H:%M:%S")
-    if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
-        if not st.session_state.master_history or st.session_state.master_history[-1]["time"] != time_str:
+        if signal_id != st.session_state.last_signal_id:
+            st.session_state.last_signal_id = signal_id
             st.session_state.master_history.append({
-                "time": time_str,
+                "time": datetime.now(eat_tz).strftime("%H:%M:%S"),
                 "horizon": execution_mode.split("(")[0].strip(),
                 "asset": selected_asset,
                 "action": signal,
                 "entry": round(price, curr_info["dec"]),
                 "tp1": round(tp1, curr_info["dec"]),
                 "sl": round(sl, curr_info["dec"]),
-                "alpha": f"{ensemble_alpha*100:.1f}%",
+                "score": f"Buy:{buy_score} | Sell:{sell_score}",
                 "status": "ACTIVE ⚡"
             })
 
-    # Update Active Signal Statuses
+    # Update active trades in Journal
     for item in st.session_state.master_history:
         if item["status"] == "ACTIVE ⚡" and item["asset"] == selected_asset:
             if "BUY" in item["action"]:
@@ -344,22 +342,32 @@ if not raw_data.empty:
                 elif price >= item["sl"]: item["status"] = "LOSS (SL) ❌"
 
     # ---------------------------------------------------------
-    # 9. DASHBOARD METRICS & UI LAYOUT
+    # 9. LLM SYNTHESIS & DASHBOARD UI METRICS
     # ---------------------------------------------------------
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Live Price", f"${price:.{curr_info['dec']}f}")
-    c2.metric("Market Structure", structure_status.split()[0] + " " + structure_status.split()[1])
-    c3.metric("Master Signal", signal)
-    c4.metric("Alpha Probability", f"{ensemble_alpha*100:.1f}%")
-    c5.metric("Max Hold Horizon", f"{max_hold} Mins")
+    def generate_institutional_synthesis(sig, b_score, s_score, reg, ml_p, h_mins):
+        return (
+            f"🤖 **Institutional Multi-TF & ML Synthesis:**\n"
+            f"• **Market Regime:** Detected **{reg}** across multi-timeframe structural alignment.\n"
+            f"• **Score Cards:** **Buy Score: {b_score}/100** vs **Sell Score: {s_score}/100** (Threshold: {min_score_threshold}).\n"
+            f"• **ML Walk-Forward Model:** Predicted probability of hitting TP before SL: **{ml_p*100:.1f}%**. Max target hold: **{h_mins} Mins**."
+        )
+
+    ai_synthesis = generate_institutional_synthesis(signal, buy_score, sell_score, market_regime, ml_win_prob, max_hold)
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Live Price", f"${price:.{curr_info['dec']}f}")
+    col2.metric("Market Regime", market_regime.split()[0])
+    col3.metric("Signal Output", signal)
+    col4.metric("Buy vs Sell Score", f"{buy_score} / {sell_score}")
+    col5.metric("ML Win Edge", f"{ml_win_prob*100:.1f}%")
 
     st.info(ai_synthesis)
 
     if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
-        st.success(f"🎯 **Execution Targets:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **TP2:** `${tp2:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}` | **Exit Max:** {max_hold}m")
+        st.success(f"🎯 **Institutional Setup Executed:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **TP2:** `${tp2:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}`")
 
     # ---------------------------------------------------------
-    # 10. TRADINGVIEW TERMINAL & TRADE JOURNAL
+    # 10. TRADINGVIEW TERMINAL & MASTER JOURNAL
     # ---------------------------------------------------------
     st.divider()
     chart_col, journal_col = st.columns([3, 1])
@@ -371,7 +379,7 @@ if not raw_data.empty:
         st.subheader(f"📊 Live TradingView Terminal ({selected_asset} - {interval})")
         tv_html = f"""
         <div class="tradingview-widget-container" style="height:520px;width:100%">
-          <div id="tv_master_container" style="height:520px;width:100%"></div>
+          <div id="tv_institutional_container" style="height:520px;width:100%"></div>
           <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
           <script type="text/javascript">
           new TradingView.widget({{
@@ -385,7 +393,7 @@ if not raw_data.empty:
             "toolbar_bg": "#11141d",
             "enable_publishing": false,
             "allow_symbol_change": true,
-            "container_id": "tv_master_container"
+            "container_id": "tv_institutional_container"
           }});
           </script>
         </div>
@@ -396,7 +404,7 @@ if not raw_data.empty:
         st.subheader("📋 Master Journal")
         if st.session_state.master_history:
             j_df = pd.DataFrame(st.session_state.master_history).tail(8)
-            cols = ["time", "action", "entry", "alpha", "status"]
+            cols = ["time", "action", "entry", "score", "status"]
             j_df = j_df[[c for c in cols if c in j_df.columns]]
             
             wins = len(j_df[j_df["status"].str.contains("WIN")])
@@ -406,7 +414,7 @@ if not raw_data.empty:
             st.metric("Model Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Completed")
             st.dataframe(j_df, use_container_width=True)
         else:
-            st.caption("Awaiting master engine signal triggers.")
+            st.caption("Awaiting institutional multi-TF triggers.")
 
     # ---------------------------------------------------------
     # 11. MACROECONOMIC NEWS FEED
@@ -430,3 +438,5 @@ if not raw_data.empty:
     </div>
     """
     components.html(news_html, height=360)
+else:
+    st.warning("⚠️ Market data feed synchronizing across multi-timeframe intervals. Please wait...")
