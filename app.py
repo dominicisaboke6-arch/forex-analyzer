@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Auto refresh Python signal engine every 10,000 milliseconds (10 seconds)
+# Auto-refresh Python signal engine every 10,000 milliseconds (10 seconds)
 st_autorefresh(interval=10000, key="minion_live_refresh")
 
 st.markdown("""
@@ -203,13 +203,14 @@ if not data.empty:
     if bos_bullish or bos_bearish: score += 25  # Market Structure Break
     if (htf_bullish and macd_hist > 0) or (htf_bearish and macd_hist < 0): score += 20  # MACD Momentum
     if (htf_bullish and 52 <= rsi <= 68) or (htf_bearish and 32 <= rsi <= 48): score += 20  # RSI Zone
-    if ema9 > ema20 if htf_bullish else ema9 < ema20: score += 10  # Moving Average Cross
+    if (ema9 > ema20 if htf_bullish else ema9 < ema20): score += 10  # Moving Average Cross
 
     confidence_pct = score
 
     # Check Cooldown State
     now_dt = datetime.now(eat_tz)
     cooldown_active = False
+    mins_since_last = 0.0
     if st.session_state.last_signal_time:
         mins_since_last = (now_dt - st.session_state.last_signal_time).total_seconds() / 60.0
         if mins_since_last < cooldown_period_mins:
@@ -218,7 +219,7 @@ if not data.empty:
     # Signal Decision Logic
     signal = "NO TRADE ⚪"
     reason = "Confluence threshold not met or market ranging."
-    tp1, tp2, tp3, sl = 0.0, 0.0, 0.0, 0.0
+    tp1, tp2, sl = 0.0, 0.0, 0.0
 
     sl_mult = 1.5 if "Scalp" in trading_mode else 2.2
     tp1_mult = 2.0 if "Scalp" in trading_mode else 3.0
@@ -336,6 +337,14 @@ with col_side:
     if st.session_state.signal_history:
         history_df = pd.DataFrame(st.session_state.signal_history).tail(8)
         
+        # Ensure missing keys on old session entries don't raise KeyError
+        required_cols = ["time", "type", "entry", "confidence", "status"]
+        for col in required_cols:
+            if col not in history_df.columns:
+                history_df[col] = "N/A"
+        
+        history_df = history_df[required_cols]
+        
         wins = len(history_df[history_df["status"].str.contains("WIN")])
         total_closed = len(history_df[~history_df["status"].str.contains("ACTIVE")])
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
@@ -343,9 +352,9 @@ with col_side:
         st.metric("Win-Rate (Current Session)", f"{win_rate:.1f}%", f"{wins}/{total_closed} Profit Hit")
         
         try:
-            st.dataframe(history_df[["time", "type", "entry", "confidence", "status"]], use_container_width=True)
+            st.dataframe(history_df, use_container_width=True)
         except Exception:
-            st.dataframe(history_df[["time", "type", "entry", "confidence", "status"]])
+            st.dataframe(history_df)
     else:
         st.caption("No signals triggered yet. High-confluence entries will auto-log here once score reaches your threshold.")
 
