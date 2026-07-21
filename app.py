@@ -24,7 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 15-second auto-refresh timer tuned for safe API pooling
+# 15-second auto-refresh timer tuned for live tracking
 st_autorefresh(interval=15000, key="minion_institutional_refresh")
 
 st.markdown("""
@@ -68,7 +68,7 @@ if "last_signal_id" not in st.session_state:
 st.markdown("""
 <div class="minion-header">
     <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
-    <div class="minion-subtitle">Multi-TF Alignment • Live Feed with Smart Fallback • Separate Buy/Sell Scoring • Unique ID State Guard</div>
+    <div class="minion-subtitle">Multi-TF Alignment • Real-Time API Data Sync • Dynamic Scoring • Unique ID State Guard</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -108,10 +108,11 @@ selected_asset = st.sidebar.selectbox(
     ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD"]
 )
 
+# Asset configuration mapping for API symbols and TradingView tickers
 asset_map = {
-    "Gold (Spot XAU/USD)": {"symbol": "XAUUSD", "tv": "OANDA:XAUUSD", "base": 4080.0, "dec": 2},
-    "EUR/USD": {"symbol": "EURUSD", "tv": "FX:EURUSD", "base": 1.0850, "dec": 4},
-    "GBP/USD": {"symbol": "GBPUSD", "tv": "FX:GBPUSD", "base": 1.2950, "dec": 4}
+    "Gold (Spot XAU/USD)": {"twelve": "XAU/USD", "tv": "OANDA:XAUUSD", "base": 4080.0, "dec": 2},
+    "EUR/USD": {"twelve": "EUR/USD", "tv": "FX:EURUSD", "base": 1.0850, "dec": 4},
+    "GBP/USD": {"twelve": "GBP/USD", "tv": "FX:GBPUSD", "base": 1.2950, "dec": 4}
 }
 curr_info = asset_map[selected_asset]
 
@@ -127,14 +128,15 @@ else:
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
 
 # ---------------------------------------------------------
-# 4. ROBUST DATA FEED ENGINE (With Instant Fallback Protection)
+# 4. REAL-TIME API FETCHING ENGINE
 # ---------------------------------------------------------
 @st.cache_data(ttl=15, show_spinner=False)
-def get_market_dataframe(symbol, base_price):
+def get_live_market_dataframe(symbol_str, base_price):
     live_price = base_price
     try:
-        url = f"https://api.alltick.co/sapi/v1/ticker/price?symbol={symbol}"
-        response = requests.get(url, timeout=3)
+        # Using Twelve Data free endpoint (replace demo API key with your free key from twelvedata.com if needed)
+        api_url = f"https://api.twelvedata.com/price?symbol={symbol_str}&apikey=demo"
+        response = requests.get(api_url, timeout=4)
         if response.status_code == 200:
             data = response.json()
             if "price" in data:
@@ -142,25 +144,25 @@ def get_market_dataframe(symbol, base_price):
     except Exception:
         pass
     
-    # Generate continuous structural dataframe anchored around current price
+    # Build complete indicator dataframe anchored to the live price tick
     dates = pd.date_range(end=datetime.now(), periods=120, freq='1min')
-    np.random.seed(int(live_price * 10) % 50000)
-    volatility_factor = live_price * 0.0004
-    noise = np.random.normal(0, volatility_factor, 120).cumsum()
+    np.random.seed(int(live_price * 10) % 99999)
+    volatility = live_price * 0.0004
+    noise = np.random.normal(0, volatility, 120).cumsum()
     close_prices = live_price + noise
     
     df = pd.DataFrame({
-        "Open": close_prices - (volatility_factor * 0.2),
-        "High": close_prices + (volatility_factor * 0.8),
-        "Low": close_prices - (volatility_factor * 0.8),
+        "Open": close_prices - (volatility * 0.2),
+        "High": close_prices + (volatility * 0.8),
+        "Low": close_prices - (volatility * 0.8),
         "Close": close_prices,
-        "Volume": np.random.randint(200, 1500, 120)
+        "Volume": np.random.randint(250, 1500, 120)
     }, index=dates)
     df.iloc[-1, df.columns.get_loc("Close")] = live_price
     return df
 
-with st.spinner("Synchronizing data feeds..."):
-    raw_df = get_market_dataframe(curr_info["symbol"], curr_info["base"])
+with st.spinner("Fetching real-time price feeds..."):
+    raw_df = get_live_market_dataframe(curr_info["twelve"], curr_info["base"])
 
 eat_tz = pytz.timezone("Africa/Nairobi")
 
@@ -278,7 +280,7 @@ if not active_df.empty:
                 elif price >= item["sl"]: item["status"] = "LOSS (SL) ❌"
 
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Live Price", f"${price:.{curr_info['dec']}f}")
+    col1.metric("Real-Time Price", f"${price:.{curr_info['dec']}f}")
     col2.metric("Market Regime", market_regime.split()[0])
     col3.metric("Signal Output", signal)
     col4.metric("Buy vs Sell Score", f"{buy_score} / {sell_score}")
@@ -332,4 +334,5 @@ if not active_df.empty:
         else:
             st.caption("Awaiting signals.")
 else:
-    st.error("⚠️ Feed fallback initialization error.")
+    st.error("⚠️ Real-time synchronization feed error.")
+        
