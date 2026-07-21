@@ -74,7 +74,7 @@ if "last_signal_id" not in st.session_state:
 st.markdown("""
 <div class="minion-header">
     <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
-    <div class="minion-subtitle">Multi-TF Alignment (1H/15m/5m/1m) • Swing BOS/CHoCH Structure • Separate Buy/Sell Scoring • Unique ID State Guard</div>
+    <div class="minion-subtitle">Multi-TF Alignment (1H/15m/5m/1m) • Spot Feed Synchronization • Separate Buy/Sell Scoring • Unique ID State Guard</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -114,8 +114,9 @@ selected_asset = st.sidebar.selectbox(
     ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD", "Bitcoin (BTC/USD)"]
 )
 
+# Updated asset map to align Yahoo spot tickers directly with TradingView feeds (removing futures variance)
 asset_map = {
-    "Gold (Spot XAU/USD)": {"yf": ["GC=F", "XAUUSD=X"], "tv": "OANDA:XAUUSD", "dec": 2},
+    "Gold (Spot XAU/USD)": {"yf": ["XAUUSD=X"], "tv": "OANDA:XAUUSD", "dec": 2},
     "EUR/USD": {"yf": ["EURUSD=X"], "tv": "FX:EURUSD", "dec": 4},
     "GBP/USD": {"yf": ["GBPUSD=X"], "tv": "FX:GBPUSD", "dec": 4},
     "Bitcoin (BTC/USD)": {"yf": ["BTC-USD"], "tv": "BITSTAMP:BTCUSD", "dec": 2}
@@ -409,7 +410,6 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
         st.subheader("📋 Master Journal")
         if st.session_state.master_history:
             j_df = pd.DataFrame(st.session_state.master_history).tail(8)
-            # Explicitly include tp1 and sl in the viewable columns
             cols = ["time", "action", "entry", "tp1", "sl", "score", "status"]
             j_df = j_df[[c for c in cols if c in j_df.columns]]
             
@@ -446,4 +446,4 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
     components.html(news_html, height=360)
 else:
     st.warning("⚠️ Market data feed synchronizing across multi-timeframe intervals. Please wait...")
-        
+    
