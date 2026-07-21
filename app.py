@@ -108,7 +108,6 @@ selected_asset = st.sidebar.selectbox(
     ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD"]
 )
 
-# Asset configuration mapping matching TradingView tickers accurately
 asset_map = {
     "Gold (Spot XAU/USD)": {"symbol": "XAUUSD", "tv": "OANDA:XAUUSD", "dec": 2},
     "EUR/USD": {"symbol": "EURUSD", "tv": "FX:EURUSD", "dec": 4},
@@ -128,20 +127,18 @@ else:
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
 
 # ---------------------------------------------------------
-# 4. LIVE API DATA FETCHING ENGINE (Using Public REST Endpoints)
+# 4. LIVE API DATA FETCHING ENGINE
 # ---------------------------------------------------------
 @st.cache_data(ttl=15, show_spinner=False)
 def fetch_live_market_data(symbol):
     try:
-        # Pulling live ticker info from a reliable open financial feed
         url = f"https://api.alltick.co/sapi/v1/ticker/price?symbol={symbol}"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            # Construct a synthetic structural dataframe from live current price action to drive indicators
             price = float(data.get("price", 4080.0))
             dates = pd.date_range(end=datetime.now(), periods=100, freq='1min')
-            np.random.seed(int(price))
+            np.random.seed(int(price) % 10000)
             noise = np.random.normal(0, price * 0.0005, 100).cumsum()
             close_prices = price + noise
             
@@ -152,12 +149,11 @@ def fetch_live_market_data(symbol):
                 "Close": close_prices,
                 "Volume": np.random.randint(100, 1000, 100)
             }, index=dates)
-            df.iloc[-1, df.columns.get_loc("Close")] = price # Force latest tick to be exact live price
+            df.iloc[-1, df.columns.get_loc("Close")] = price
             return df
     except Exception:
         pass
     
-    # Fallback simulated live dataframe if network connection blocks
     dates = pd.date_range(end=datetime.now(), periods=100, freq='1min')
     base_p = 4078.0 if "Gold" in selected_asset else 1.0850
     df = pd.DataFrame({
@@ -207,15 +203,11 @@ if not active_df.empty:
     rsi = float(latest["RSI"])
     macd_hist = float(latest["MACD_Hist"])
 
-    # ---------------------------------------------------------
-    # 5. ADVANCED SWING STRUCTURE (BOS & TRUE CHoCH)
-    # ---------------------------------------------------------
     def get_swing_bias(df_sub):
         if len(df_sub) < 15: return "RANGING", 0
         sw_high = df_sub["High"].rolling(window=5).max()
         sw_low = df_sub["Low"].rolling(window=5).min()
         curr_c = df_sub["Close"].iloc[-1]
-        prev_c = df_sub["Close"].iloc[-2]
         
         if curr_c > sw_high.iloc[-2]:
             return "BULLISH BOS", 1
@@ -226,22 +218,15 @@ if not active_df.empty:
     bias_val = get_swing_bias(active_df)[1]
     market_regime = "TRENDING BULLISH 📈" if bias_val == 1 else ("TRENDING BEARISH 📉" if bias_val == -1 else "RANGING CONSOLIDATION 🟡")
 
-    # ---------------------------------------------------------
-    # 6. SEPARATE BUY & SELL MULTI-FACTOR SCORE CARDS (0 to 100)
-    # ---------------------------------------------------------
     buy_score = 50 + (25 if bias_val >= 1 else 0) + (15 if macd_hist > 0 else 0) + (10 if rsi > 50 else 0)
     sell_score = 50 + (25 if bias_val <= -1 else 0) + (15 if macd_hist < 0 else 0) + (10 if rsi < 50 else 0)
 
-    # ---------------------------------------------------------
-    # 7. ML FORWARD OUTCOME TARGET PROBABILITY
-    # ---------------------------------------------------------
     ml_win_prob = 0.55
     if XGB_AVAILABLE and len(active_df) > 30:
         try:
             feat_cols = ["RSI", "MACD_Hist", "ATR", "EMA_8", "EMA_21", "EMA_50"]
             train_sub = active_df.copy()
             tp_forward = train_sub["Close"] + (train_sub["ATR"] * 1.5)
-            sl_forward = train_sub["Close"] - (train_sub["ATR"] * 1.0)
             
             outcome = [1 if (train_sub["High"].iloc[i+1:i+3] >= tp_forward.iloc[i]).any() else 0 for i in range(len(train_sub) - 3)]
             if len(outcome) > 20:
@@ -253,9 +238,6 @@ if not active_df.empty:
         except Exception:
             pass
 
-    # ---------------------------------------------------------
-    # 8. RIGID SIGNAL ENGINE
-    # ---------------------------------------------------------
     signal = "NEUTRAL / WAIT ⚪"
     sl, tp1, tp2 = 0.0, 0.0, 0.0
 
@@ -288,9 +270,6 @@ if not active_df.empty:
                 "status": "ACTIVE ⚡"
             })
 
-    # ---------------------------------------------------------
-    # 9. UPDATE ACTIVE TRADES USING CANDLE WICKS
-    # ---------------------------------------------------------
     for item in st.session_state.master_history:
         if item["status"] == "ACTIVE ⚡" and item["asset"] == selected_asset:
             if "BUY" in item["action"]:
@@ -300,9 +279,6 @@ if not active_df.empty:
                 if price <= item["tp1"]: item["status"] = "WIN (TP) ✅"
                 elif price >= item["sl"]: item["status"] = "LOSS (SL) ❌"
 
-    # ---------------------------------------------------------
-    # 10. DASHBOARD UI METRICS
-    # ---------------------------------------------------------
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Live Price", f"${price:.{curr_info['dec']}f}")
     col2.metric("Market Regime", market_regime.split()[0])
@@ -313,9 +289,6 @@ if not active_df.empty:
     if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
         st.success(f"🎯 **Live Setup Executed:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}`")
 
-    # ---------------------------------------------------------
-    # 11. TRADINGVIEW TERMINAL & MASTER JOURNAL
-    # ---------------------------------------------------------
     st.divider()
     chart_col, journal_col = st.columns([3, 1])
     tv_tf = {"1m": "1", "5m": "5", "15m": "15", "30m": "30"}.get(interval, "1")
@@ -362,7 +335,3 @@ if not active_df.empty:
             st.caption("Awaiting live signals.")
 else:
     st.error("⚠️ Failed to load live price data feed.")
-
-[How to Track Stock Prices Using Python | Real-Time Stock Monitoring with yfinance and API Tools](https://www.youtube.com/watch?v=5X1HtQtum_4&vl=en)
-
-This video demonstrates practical methods for tracking and managing real-time price monitoring loops within custom Python scripts.
