@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Auto refresh Python signal calculations every 10,000 milliseconds (10 seconds)
+# Auto refresh Python signal engine every 10,000 milliseconds (10 seconds)
 st_autorefresh(interval=10000, key="minion_live_refresh")
 
 st.markdown("""
@@ -94,8 +94,10 @@ for ticker in curr_info["yf"]:
 eat_tz = pytz.timezone("Africa/Nairobi")
 
 if not data.empty:
+    # Safely handle yfinance multi-index columns
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
+    
     data = data.dropna()
 
     if data.index.tz is None:
@@ -103,11 +105,11 @@ if not data.empty:
     else:
         data.index = data.index.tz_convert(eat_tz)
 
-    # Core EMAs
+    # Core Moving Averages
     data["EMA_9"] = data["Close"].ewm(span=9, adjust=False).mean()
     data["EMA_20"] = data["Close"].ewm(span=20, adjust=False).mean()
     data["EMA_50"] = data["Close"].ewm(span=50, adjust=False).mean()
-    data["EMA_200"] = data["Close"].ewm(span=200, adjust=False).mean()  # Macro Trend Filter
+    data["EMA_200"] = data["Close"].ewm(span=200, adjust=False).mean()  # Trend Filter
 
     # RSI (14)
     delta = data["Close"].diff()
@@ -125,7 +127,7 @@ if not data.empty:
     data["MACD_Signal"] = data["MACD"].ewm(span=9, adjust=False).mean()
     data["MACD_Hist"] = data["MACD"] - data["MACD_Signal"]
 
-    # ATR (14) Volatility
+    # ATR (14)
     high_low = data["High"] - data["Low"]
     high_close = (data["High"] - data["Close"].shift()).abs()
     low_close = (data["Low"] - data["Close"].shift()).abs()
@@ -143,7 +145,7 @@ if not data.empty:
     atr_val = float(latest["ATR"])
 
     # ---------------------------------------------------------
-    # 5. MAXIMUM PERCENTAGE WIN-RATE SIGNAL ALGORITHM
+    # 5. HIGH WIN-RATE SIGNAL LOGIC
     # ---------------------------------------------------------
     macro_bullish = price > ema200
     macro_bearish = price < ema200
@@ -156,7 +158,6 @@ if not data.empty:
     reason = "Awaiting macro trend & volume alignment."
     tp1, tp2, sl = 0.0, 0.0, 0.0
 
-    # High Probability Confluence Criteria
     if macro_bullish and ema9 > ema20 and macd_hist > 0 and (52 <= rsi <= 65):
         signal = "BUY EXECUTE 🚀"
         reason = "Aligned with 200-EMA Trend + MACD Expansion + Optimal RSI Momentum."
@@ -190,13 +191,13 @@ if not data.empty:
                 "time": now_str,
                 "asset": selected_asset,
                 "type": signal,
-                "entry": price,
-                "tp1": tp1,
-                "sl": sl,
+                "entry": round(price, curr_info["dec"]),
+                "tp1": round(tp1, curr_info["dec"]),
+                "sl": round(sl, curr_info["dec"]),
                 "status": "ACTIVE 🟡"
             })
 
-    # Evaluate previous signals vs current price
+    # Evaluate active historical signals
     for sig in st.session_state.signal_history:
         if sig["status"] == "ACTIVE 🟡" and sig["asset"] == selected_asset:
             if "BUY" in sig["type"]:
@@ -269,7 +270,12 @@ with col_side:
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
         
         st.metric("Logged Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Won")
-       st.dataframe(history_df[["time", "type", "entry", "status"]], use_container_width=True)
+        
+        # Streamlit version safe dataframe render
+        try:
+            st.dataframe(history_df[["time", "type", "entry", "status"]], use_container_width=True)
+        except Exception:
+            st.dataframe(history_df[["time", "type", "entry", "status"]])
     else:
         st.caption("No historical signals recorded in this session yet. High-precision signals will auto-log here as they trigger.")
 
