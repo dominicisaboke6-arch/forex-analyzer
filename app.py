@@ -74,7 +74,7 @@ if "last_signal_id" not in st.session_state:
 st.markdown("""
 <div class="minion-header">
     <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
-    <div class="minion-subtitle">Multi-TF Alignment (1H/15m/5m/1m) • Spot Feed Synchronization • Separate Buy/Sell Scoring • Unique ID State Guard</div>
+    <div class="minion-subtitle">Multi-TF Alignment (1H/15m/5m/1m) • Robust Feed Fallback • Separate Buy/Sell Scoring • Unique ID State Guard</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -114,9 +114,9 @@ selected_asset = st.sidebar.selectbox(
     ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD", "Bitcoin (BTC/USD)"]
 )
 
-# Updated asset map to align Yahoo spot tickers directly with TradingView feeds (removing futures variance)
+# Expanded fallback ticker lists to guarantee data retrieval without hanging
 asset_map = {
-    "Gold (Spot XAU/USD)": {"yf": ["XAUUSD=X"], "tv": "OANDA:XAUUSD", "dec": 2},
+    "Gold (Spot XAU/USD)": {"yf": ["XAUUSD=X", "GC=F"], "tv": "OANDA:XAUUSD", "dec": 2},
     "EUR/USD": {"yf": ["EURUSD=X"], "tv": "FX:EURUSD", "dec": 4},
     "GBP/USD": {"yf": ["GBPUSD=X"], "tv": "FX:GBPUSD", "dec": 4},
     "Bitcoin (BTC/USD)": {"yf": ["BTC-USD"], "tv": "BITSTAMP:BTCUSD", "dec": 2}
@@ -135,7 +135,7 @@ else:
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
 
 # ---------------------------------------------------------
-# 4. MULTI-TIMEFRAME DATA FETCHING ENGINE (1H, 15M, 5M, 1M)
+# 4. ROBUST MULTI-TIMEFRAME DATA FETCHING ENGINE
 # ---------------------------------------------------------
 @st.cache_data(ttl=15, show_spinner=False)
 def fetch_mtf_data(ticker_list, per, iv):
@@ -145,16 +145,17 @@ def fetch_mtf_data(ticker_list, per, iv):
             if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
-                return df.dropna()
+                if len(df.dropna()) > 5:
+                    return df.dropna()
         except Exception:
             continue
     return pd.DataFrame()
 
-# Fetch required granular and macro timeframes
-df_1m = fetch_mtf_data(curr_info["yf"], "1d", "1m")
-df_5m = fetch_mtf_data(curr_info["yf"], "5d", "5m")
-df_15m = fetch_mtf_data(curr_info["yf"], "5d", "15m")
-df_1h = fetch_mtf_data(curr_info["yf"], "1mo", "1h")
+with st.spinner("Synchronizing multi-timeframe market feeds..."):
+    df_1m = fetch_mtf_data(curr_info["yf"], "1d", "1m")
+    df_5m = fetch_mtf_data(curr_info["yf"], "5d", "5m")
+    df_15m = fetch_mtf_data(curr_info["yf"], "5d", "15m")
+    df_1h = fetch_mtf_data(curr_info["yf"], "1mo", "1h")
 
 eat_tz = pytz.timezone("Africa/Nairobi")
 
@@ -191,15 +192,25 @@ df_5m = process_indicators(df_5m)
 df_15m = process_indicators(df_15m)
 df_1h = process_indicators(df_1h)
 
-# Active target dataframe based on user UI selection
+# Active target dataframe based on user UI selection (with graceful fallback to available data)
 active_df = {"1m": df_1m, "5m": df_5m, "15m": df_15m, "30m": df_15m}.get(interval, df_5m)
+if active_df.empty:
+    for fallback in [df_5m, df_15m, df_1h, df_1m]:
+        if not fallback.empty:
+            active_df = fallback
+            break
 
-if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.empty:
+if not active_df.empty:
+    # Fill missing higher TF dataframes with active_df if an individual fetch timed out
+    if df_1h.empty: df_1h = active_df
+    if df_15m.empty: df_15m = active_df
+    if df_5m.empty: df_5m = active_df
+
     latest = active_df.iloc[-1]
     price = float(latest["Close"])
-    atr = float(latest["ATR"])
-    rsi = float(latest["RSI"])
-    macd_hist = float(latest["MACD_Hist"])
+    atr = float(latest["ATR"]) if "ATR" in latest and not pd.isna(latest["ATR"]) else price * 0.001
+    rsi = float(latest["RSI"]) if "RSI" in latest and not pd.isna(latest["RSI"]) else 50.0
+    macd_hist = float(latest["MACD_Hist"]) if "MACD_Hist" in latest and not pd.isna(latest["MACD_Hist"]) else 0.0
 
     # ---------------------------------------------------------
     # 5. ADVANCED SWING STRUCTURE (BOS & TRUE CHoCH)
@@ -233,33 +244,27 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
     buy_score = 0
     sell_score = 0
 
-    # 1H Trend Contribution (+25)
     if val_1h == 1: buy_score += 25
     elif val_1h == -1: sell_score += 25
 
-    # 15M Structure Contribution (+20)
     if val_15m >= 1: buy_score += 20
     elif val_15m <= -1: sell_score += 20
 
-    # 5M Setup / BOS Contribution (+20)
     if val_5m >= 1: buy_score += 20
     elif val_5m <= -1: sell_score += 20
 
-    # Momentum MACD (+10)
     if macd_hist > 0: buy_score += 10
     else: sell_score += 10
 
-    # RSI Momentum (+10)
     if rsi > 50: buy_score += 10
     else: sell_score += 10
 
-    # Retest / Volatility Safety (+15)
     if atr > 0:
         buy_score += 15
         sell_score += 15
 
     # ---------------------------------------------------------
-    # 7. ML FORWARD OUTCOME TARGET PROBABILITY (Walk-Forward Simulation)
+    # 7. ML FORWARD OUTCOME TARGET PROBABILITY
     # ---------------------------------------------------------
     ml_win_prob = 0.50
     if XGB_AVAILABLE and len(active_df) > 50:
@@ -373,7 +378,7 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
         st.success(f"🎯 **Institutional Setup Executed:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **TP2:** `${tp2:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}`")
 
     # ---------------------------------------------------------
-    # 11. TRADINGVIEW TERMINAL & MASTER JOURNAL (WITH TP/SL DISPLAY)
+    # 11. TRADINGVIEW TERMINAL & MASTER JOURNAL
     # ---------------------------------------------------------
     st.divider()
     chart_col, journal_col = st.columns([3, 1])
@@ -445,5 +450,4 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
     """
     components.html(news_html, height=360)
 else:
-    st.warning("⚠️ Market data feed synchronizing across multi-timeframe intervals. Please wait...")
-    
+    st.error("⚠️ Unable to establish market data feed from Yahoo Finance. Please check your network connection or try selecting a different asset pair.")
