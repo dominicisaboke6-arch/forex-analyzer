@@ -269,7 +269,7 @@ with col_side:
         win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
         
         st.metric("Logged Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Won")
-        st.dataframe(history_df[["time", "type", "entry", "status"]], use_container_index=True)
+       st.dataframe(history_df[["time", "type", "entry", "status"]], use_container_width=True)
     else:
         st.caption("No historical signals recorded in this session yet. High-precision signals will auto-log here as they trigger.")
 
