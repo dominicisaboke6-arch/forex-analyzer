@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for AURUM-style dark UI
+# Custom CSS for MINION-style dark UI
 st.markdown("""
 <style>
     .stApp { background-color: #0b0e14; color: #e1e6ed; }
@@ -50,7 +50,7 @@ def get_active_sessions(utc_time):
 active_sessions_str = get_active_sessions(utc_now)
 
 # Top Banner Header
-st.title("⚜️ AURUM - Live Gold & Forex Scanner")
+st.title("⚜️ MINION - Live Gold & Forex Scanner")
 st.caption(f"🕒 **EAT Time:** `{eat_now.strftime('%Y-%m-%d %H:%M:%S')}` | 🌍 **Active Sessions:** `{active_sessions_str}`")
 
 # ---------------------------------------------------------
