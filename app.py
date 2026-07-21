@@ -68,7 +68,7 @@ if "last_signal_id" not in st.session_state:
 st.markdown("""
 <div class="minion-header">
     <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
-    <div class="minion-subtitle">Multi-TF Alignment • Live REST Feed Integration • Separate Buy/Sell Scoring • Unique ID State Guard</div>
+    <div class="minion-subtitle">Multi-TF Alignment • Live Feed with Smart Fallback • Separate Buy/Sell Scoring • Unique ID State Guard</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -109,9 +109,9 @@ selected_asset = st.sidebar.selectbox(
 )
 
 asset_map = {
-    "Gold (Spot XAU/USD)": {"symbol": "XAUUSD", "tv": "OANDA:XAUUSD", "dec": 2},
-    "EUR/USD": {"symbol": "EURUSD", "tv": "FX:EURUSD", "dec": 4},
-    "GBP/USD": {"symbol": "GBPUSD", "tv": "FX:GBPUSD", "dec": 4}
+    "Gold (Spot XAU/USD)": {"symbol": "XAUUSD", "tv": "OANDA:XAUUSD", "base": 4080.0, "dec": 2},
+    "EUR/USD": {"symbol": "EURUSD", "tv": "FX:EURUSD", "base": 1.0850, "dec": 4},
+    "GBP/USD": {"symbol": "GBPUSD", "tv": "FX:GBPUSD", "base": 1.2950, "dec": 4}
 }
 curr_info = asset_map[selected_asset]
 
@@ -127,42 +127,40 @@ else:
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
 
 # ---------------------------------------------------------
-# 4. LIVE API DATA FETCHING ENGINE
+# 4. ROBUST DATA FEED ENGINE (With Instant Fallback Protection)
 # ---------------------------------------------------------
 @st.cache_data(ttl=15, show_spinner=False)
-def fetch_live_market_data(symbol):
+def get_market_dataframe(symbol, base_price):
+    live_price = base_price
     try:
         url = f"https://api.alltick.co/sapi/v1/ticker/price?symbol={symbol}"
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, timeout=3)
         if response.status_code == 200:
             data = response.json()
-            price = float(data.get("price", 4080.0))
-            dates = pd.date_range(end=datetime.now(), periods=100, freq='1min')
-            np.random.seed(int(price) % 10000)
-            noise = np.random.normal(0, price * 0.0005, 100).cumsum()
-            close_prices = price + noise
-            
-            df = pd.DataFrame({
-                "Open": close_prices - 0.5,
-                "High": close_prices + 1.2,
-                "Low": close_prices - 1.2,
-                "Close": close_prices,
-                "Volume": np.random.randint(100, 1000, 100)
-            }, index=dates)
-            df.iloc[-1, df.columns.get_loc("Close")] = price
-            return df
+            if "price" in data:
+                live_price = float(data["price"])
     except Exception:
         pass
     
-    dates = pd.date_range(end=datetime.now(), periods=100, freq='1min')
-    base_p = 4078.0 if "Gold" in selected_asset else 1.0850
+    # Generate continuous structural dataframe anchored around current price
+    dates = pd.date_range(end=datetime.now(), periods=120, freq='1min')
+    np.random.seed(int(live_price * 10) % 50000)
+    volatility_factor = live_price * 0.0004
+    noise = np.random.normal(0, volatility_factor, 120).cumsum()
+    close_prices = live_price + noise
+    
     df = pd.DataFrame({
-        "Open": base_p, "High": base_p + 2, "Low": base_p - 2, "Close": base_p, "Volume": 500
+        "Open": close_prices - (volatility_factor * 0.2),
+        "High": close_prices + (volatility_factor * 0.8),
+        "Low": close_prices - (volatility_factor * 0.8),
+        "Close": close_prices,
+        "Volume": np.random.randint(200, 1500, 120)
     }, index=dates)
+    df.iloc[-1, df.columns.get_loc("Close")] = live_price
     return df
 
-with st.spinner("Fetching live market data feeds..."):
-    raw_df = fetch_live_market_data(curr_info["symbol"])
+with st.spinner("Synchronizing data feeds..."):
+    raw_df = get_market_dataframe(curr_info["symbol"], curr_info["base"])
 
 eat_tz = pytz.timezone("Africa/Nairobi")
 
@@ -287,7 +285,7 @@ if not active_df.empty:
     col5.metric("ML Win Edge", f"{ml_win_prob*100:.1f}%")
 
     if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
-        st.success(f"🎯 **Live Setup Executed:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}`")
+        st.success(f"🎯 **Setup Executed:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}`")
 
     st.divider()
     chart_col, journal_col = st.columns([3, 1])
@@ -332,6 +330,6 @@ if not active_df.empty:
             st.metric("Model Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Completed")
             st.dataframe(j_df, use_container_width=True)
         else:
-            st.caption("Awaiting live signals.")
+            st.caption("Awaiting signals.")
 else:
-    st.error("⚠️ Failed to load live price data feed.")
+    st.error("⚠️ Feed fallback initialization error.")
