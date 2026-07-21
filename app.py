@@ -24,6 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Auto-refresh timer for live polling
 st_autorefresh(interval=15000, key="minion_institutional_refresh")
 
 st.markdown("""
@@ -169,4 +170,190 @@ def fetch_live_market_data(symbol, td_interval, key):
 with st.spinner("Syncing data with live market feeds..."):
     raw_df, fetch_error = fetch_live_market_data(curr_info["td"], td_interval, api_key)
 
-if
+if fetch_error:
+    st.error(f"⚠️ Live Feed API Error: {fetch_error}")
+    st.stop()
+
+# ---------------------------------------------------------
+# 5. TECHNICAL INDICATORS & SIGNAL GENERATION
+# ---------------------------------------------------------
+eat_tz = pytz.timezone("Africa/Nairobi")
+
+def process_indicators(df):
+    if df.empty: 
+        return df
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC").tz_convert(eat_tz)
+    else:
+        df.index = df.index.tz_convert(eat_tz)
+        
+    df["EMA_8"] = df["Close"].ewm(span=8, adjust=False).mean()
+    df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
+    df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
+    
+    delta = df["Close"].diff()
+    gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
+    loss = -delta.where(delta < 0, 0).ewm(alpha=1/14, adjust=False).mean()
+    df["RSI"] = 100 - (100 / (1 + (gain / loss)))
+    
+    df["MACD"] = df["Close"].ewm(span=12).mean() - df["Close"].ewm(span=26).mean()
+    df["MACD_Sig"] = df["MACD"].ewm(span=9).mean()
+    df["MACD_Hist"] = df["MACD"] - df["MACD_Sig"]
+    
+    tr = pd.concat([
+        df["High"] - df["Low"],
+        (df["High"] - df["Close"].shift()).abs(),
+        (df["Low"] - df["Close"].shift()).abs()
+    ], axis=1).max(axis=1)
+    df["ATR"] = tr.ewm(span=14, adjust=False).mean()
+    return df.dropna()
+
+active_df = process_indicators(raw_df)
+
+if not active_df.empty:
+    latest = active_df.iloc[-1]
+    price = float(latest["Close"])
+    atr = float(latest["ATR"])
+    rsi = float(latest["RSI"])
+    macd_hist = float(latest["MACD_Hist"])
+
+    def get_swing_bias(df_sub):
+        if len(df_sub) < 15: 
+            return "RANGING", 0
+        sw_high = df_sub["High"].rolling(window=5).max()
+        sw_low = df_sub["Low"].rolling(window=5).min()
+        curr_c = df_sub["Close"].iloc[-1]
+        
+        if curr_c > sw_high.iloc[-2]:
+            return "BULLISH BOS", 1
+        elif curr_c < sw_low.iloc[-2]:
+            return "BEARISH BOS", -1
+        return "RANGING", 0
+
+    bias_val = get_swing_bias(active_df)[1]
+    market_regime = "TRENDING BULLISH 📈" if bias_val == 1 else ("TRENDING BEARISH 📉" if bias_val == -1 else "RANGING CONSOLIDATION 🟡")
+
+    buy_score = 50 + (25 if bias_val >= 1 else 0) + (15 if macd_hist > 0 else 0) + (10 if rsi > 50 else 0)
+    sell_score = 50 + (25 if bias_val <= -1 else 0) + (15 if macd_hist < 0 else 0) + (10 if rsi < 50 else 0)
+
+    ml_win_prob = 0.55
+    if XGB_AVAILABLE and len(active_df) > 30:
+        try:
+            feat_cols = ["RSI", "MACD_Hist", "ATR", "EMA_8", "EMA_21", "EMA_50"]
+            train_sub = active_df.copy()
+            tp_forward = train_sub["Close"] + (train_sub["ATR"] * 1.5)
+            
+            outcome = [1 if (train_sub["High"].iloc[i+1:i+3] >= tp_forward.iloc[i]).any() else 0 for i in range(len(train_sub) - 3)]
+            if len(outcome) > 20:
+                train_sub = train_sub.iloc[:len(outcome)]
+                train_sub["Target_Outcome"] = outcome
+                model_xgb = xgb.XGBClassifier(n_estimators=10, max_depth=2, verbosity=0)
+                model_xgb.fit(train_sub[feat_cols], train_sub["Target_Outcome"])
+                ml_win_prob = float(model_xgb.predict_proba(pd.DataFrame([latest[feat_cols]], columns=feat_cols))[0][1])
+        except Exception:
+            pass
+
+    signal = "NEUTRAL / WAIT ⚪"
+    sl, tp1, tp2 = 0.0, 0.0, 0.0
+
+    if buy_score >= min_score_threshold:
+        signal = "BUY EXECUTE 🚀"
+        sl = price - (atr * 0.9)
+        tp1 = price + (atr * 1.5)
+        tp2 = price + (atr * 2.5)
+    elif sell_score >= min_score_threshold:
+        signal = "SELL EXECUTE 📉"
+        sl = price + (atr * 0.9)
+        tp1 = price - (atr * 1.5)
+        tp2 = price - (atr * 2.5)
+
+    current_candle_timestamp = str(active_df.index[-1])
+    signal_id = f"{selected_asset}_{interval}_{signal}_{current_candle_timestamp}"
+
+    if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
+        if signal_id != st.session_state.last_signal_id:
+            st.session_state.last_signal_id = signal_id
+            st.session_state.master_history.append({
+                "time": datetime.now(eat_tz).strftime("%H:%M:%S"),
+                "horizon": execution_mode.split("(")[0].strip(),
+                "asset": selected_asset,
+                "action": signal,
+                "entry": round(price, curr_info["dec"]),
+                "tp1": round(tp1, curr_info["dec"]),
+                "sl": round(sl, curr_info["dec"]),
+                "score": f"Buy:{buy_score} | Sell:{sell_score}",
+                "status": "ACTIVE ⚡"
+            })
+
+    for item in st.session_state.master_history:
+        if item["status"] == "ACTIVE ⚡" and item["asset"] == selected_asset:
+            if "BUY" in item["action"]:
+                if price >= item["tp1"]: 
+                    item["status"] = "WIN (TP) ✅"
+                elif price <= item["sl"]: 
+                    item["status"] = "LOSS (SL) ❌"
+            elif "SELL" in item["action"]:
+                if price <= item["tp1"]: 
+                    item["status"] = "WIN (TP) ✅"
+                elif price >= item["sl"]: 
+                    item["status"] = "LOSS (SL) ❌"
+
+    # ---------------------------------------------------------
+    # 6. DASHBOARD DISPLAY & METRICS
+    # ---------------------------------------------------------
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Live Market Price", f"${price:.{curr_info['dec']}f}")
+    col2.metric("Market Regime", market_regime.split()[0])
+    col3.metric("Signal Output", signal)
+    col4.metric("Buy vs Sell Score", f"{buy_score} / {sell_score}")
+    col5.metric("ML Win Edge", f"{ml_win_prob*100:.1f}%")
+
+    if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
+        st.success(f"🎯 **Setup Executed:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}`")
+
+    st.divider()
+    chart_col, journal_col = st.columns([3, 1])
+    tv_tf = {"1m": "1", "5m": "5", "15m": "15", "30m": "30"}.get(interval, "1")
+
+    with chart_col:
+        st.subheader(f"📊 Live TradingView Terminal ({selected_asset} - {interval})")
+        tv_html = f"""
+        <div class="tradingview-widget-container" style="height:520px;width:100%">
+          <div id="tv_institutional_container" style="height:520px;width:100%"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+          <script type="text/javascript">
+          new TradingView.widget({{
+            "autosize": true,
+            "symbol": "{curr_info['tv']}",
+            "interval": "{tv_tf}",
+            "timezone": "Africa/Nairobi",
+            "theme": "dark",
+            "style": "1",
+            "locale": "en",
+            "toolbar_bg": "#11141d",
+            "enable_publishing": false,
+            "allow_symbol_change": true,
+            "container_id": "tv_institutional_container"
+          }});
+          </script>
+        </div>
+        """
+        components.html(tv_html, height=530)
+
+    with journal_col:
+        st.subheader("📋 Master Journal")
+        if st.session_state.master_history:
+            j_df = pd.DataFrame(st.session_state.master_history).tail(8)
+            cols = ["time", "action", "entry", "tp1", "sl", "score", "status"]
+            j_df = j_df[[c for c in cols if c in j_df.columns]]
+            
+            wins = len(j_df[j_df["status"].str.contains("WIN")])
+            total_closed = len(j_df[~j_df["status"].str.contains("ACTIVE")])
+            win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
+            
+            st.metric("Model Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Completed")
+            st.dataframe(j_df, use_container_width=True)
+        else:
+            st.caption("Awaiting signals.")
+else:
+    st.error("⚠️ Unable to process indicator data.")
