@@ -24,7 +24,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Auto-refresh timer for live polling
 st_autorefresh(interval=15000, key="minion_institutional_refresh")
 
 st.markdown("""
@@ -110,7 +109,6 @@ selected_asset = st.sidebar.selectbox(
     ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD"]
 )
 
-# Twelve Data symbols + TradingView symbols
 asset_map = {
     "Gold (Spot XAU/USD)": {"td": "XAU/USD", "tv": "OANDA:XAUUSD", "dec": 2},
     "EUR/USD": {"td": "EUR/USD", "tv": "FX:EURUSD", "dec": 4},
@@ -174,32 +172,39 @@ if fetch_error:
     st.error(f"⚠️ Live Feed API Error: {fetch_error}")
     st.stop()
 
+# 🔍 DEBUG — tells us if fresh candles are actually arriving. Remove once confirmed working.
+st.session_state['_debug_refresh'] = st.session_state.get('_debug_refresh', 0) + 1
+st.caption(
+    f"🔍 Last candle: {raw_df.index[-1]} | Now (UTC): {datetime.utcnow()} | "
+    f"Rows: {len(raw_df)} | Refresh #: {st.session_state['_debug_refresh']}"
+)
+
 # ---------------------------------------------------------
 # 5. TECHNICAL INDICATORS & SIGNAL GENERATION
 # ---------------------------------------------------------
 eat_tz = pytz.timezone("Africa/Nairobi")
 
 def process_indicators(df):
-    if df.empty: 
+    if df.empty:
         return df
     if df.index.tz is None:
         df.index = df.index.tz_localize("UTC").tz_convert(eat_tz)
     else:
         df.index = df.index.tz_convert(eat_tz)
-        
+
     df["EMA_8"] = df["Close"].ewm(span=8, adjust=False).mean()
     df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
     df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
-    
+
     delta = df["Close"].diff()
     gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
     loss = -delta.where(delta < 0, 0).ewm(alpha=1/14, adjust=False).mean()
     df["RSI"] = 100 - (100 / (1 + (gain / loss)))
-    
+
     df["MACD"] = df["Close"].ewm(span=12).mean() - df["Close"].ewm(span=26).mean()
     df["MACD_Sig"] = df["MACD"].ewm(span=9).mean()
     df["MACD_Hist"] = df["MACD"] - df["MACD_Sig"]
-    
+
     tr = pd.concat([
         df["High"] - df["Low"],
         (df["High"] - df["Close"].shift()).abs(),
@@ -218,12 +223,12 @@ if not active_df.empty:
     macd_hist = float(latest["MACD_Hist"])
 
     def get_swing_bias(df_sub):
-        if len(df_sub) < 15: 
+        if len(df_sub) < 15:
             return "RANGING", 0
         sw_high = df_sub["High"].rolling(window=5).max()
         sw_low = df_sub["Low"].rolling(window=5).min()
         curr_c = df_sub["Close"].iloc[-1]
-        
+
         if curr_c > sw_high.iloc[-2]:
             return "BULLISH BOS", 1
         elif curr_c < sw_low.iloc[-2]:
@@ -242,7 +247,7 @@ if not active_df.empty:
             feat_cols = ["RSI", "MACD_Hist", "ATR", "EMA_8", "EMA_21", "EMA_50"]
             train_sub = active_df.copy()
             tp_forward = train_sub["Close"] + (train_sub["ATR"] * 1.5)
-            
+
             outcome = [1 if (train_sub["High"].iloc[i+1:i+3] >= tp_forward.iloc[i]).any() else 0 for i in range(len(train_sub) - 3)]
             if len(outcome) > 20:
                 train_sub = train_sub.iloc[:len(outcome)]
@@ -288,19 +293,16 @@ if not active_df.empty:
     for item in st.session_state.master_history:
         if item["status"] == "ACTIVE ⚡" and item["asset"] == selected_asset:
             if "BUY" in item["action"]:
-                if price >= item["tp1"]: 
+                if price >= item["tp1"]:
                     item["status"] = "WIN (TP) ✅"
-                elif price <= item["sl"]: 
+                elif price <= item["sl"]:
                     item["status"] = "LOSS (SL) ❌"
             elif "SELL" in item["action"]:
-                if price <= item["tp1"]: 
+                if price <= item["tp1"]:
                     item["status"] = "WIN (TP) ✅"
-                elif price >= item["sl"]: 
+                elif price >= item["sl"]:
                     item["status"] = "LOSS (SL) ❌"
 
-    # ---------------------------------------------------------
-    # 6. DASHBOARD DISPLAY & METRICS
-    # ---------------------------------------------------------
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Live Market Price", f"${price:.{curr_info['dec']}f}")
     col2.metric("Market Regime", market_regime.split()[0])
@@ -346,11 +348,11 @@ if not active_df.empty:
             j_df = pd.DataFrame(st.session_state.master_history).tail(8)
             cols = ["time", "action", "entry", "tp1", "sl", "score", "status"]
             j_df = j_df[[c for c in cols if c in j_df.columns]]
-            
+
             wins = len(j_df[j_df["status"].str.contains("WIN")])
             total_closed = len(j_df[~j_df["status"].str.contains("ACTIVE")])
             win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
-            
+
             st.metric("Model Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Completed")
             st.dataframe(j_df, use_container_width=True)
         else:
