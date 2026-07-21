@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Auto-refresh Python signal engine every 10,000 milliseconds (10 seconds)
+# Auto-refresh Python signal engine every 10 seconds
 st_autorefresh(interval=10000, key="minion_live_refresh")
 
 st.markdown("""
@@ -62,8 +62,8 @@ if "ml_dataset" not in st.session_state:
 # ---------------------------------------------------------
 st.markdown("""
 <div class="minion-header">
-    <div class="minion-title">⚡ MINION QUANT ALPHA V3 ⚡</div>
-    <div class="minion-subtitle">Multi-Confluence Structural Signal Engine • High-Timeframe Trend Filters • ML Pipeline Ready</div>
+    <div class="minion-title">⚡ MINION QUANT ALPHA V4 ⚡</div>
+    <div class="minion-subtitle">Multi-Layer Decision Engine • Market Regime Detection • Structural Setup Verification • Risk Filter</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -92,7 +92,7 @@ components.html(clock_html, height=55)
 # ---------------------------------------------------------
 # 4. SIDEBAR CONTROLS & PARAMS
 # ---------------------------------------------------------
-st.sidebar.header("🕹️ Strategy & Filters")
+st.sidebar.header("🕹️ Decision Engine & Filters")
 
 trading_mode = st.sidebar.radio("Execution Strategy", ["📈 High Confluence Scalp (5m)", "📊 Macro Trend Swing (15m/1h)"])
 selected_asset = st.sidebar.selectbox("Asset Pair", ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD", "USD/JPY"])
@@ -114,10 +114,11 @@ else:
     period = "1mo"
 
 cooldown_period_mins = st.sidebar.slider("Signal Cooldown (Minutes)", 5, 60, 20)
-min_confluence_cutoff = st.sidebar.slider("Min Confluence Threshold (%)", 50, 90, 70)
+min_rr_threshold = st.sidebar.slider("Min Risk-to-Reward Ratio (1:X)", 1.2, 3.0, 1.5, step=0.1)
+min_confluence_cutoff = st.sidebar.slider("Min Confluence Threshold (%)", 50, 90, 65)
 
 # ---------------------------------------------------------
-# 5. DATA ENGINE WITH MARKET STRUCTURE & INDICATORS
+# 5. DATA ENGINE & TECHNICAL CALCULATIONS
 # ---------------------------------------------------------
 data = pd.DataFrame()
 for ticker in curr_info["yf"]:
@@ -141,7 +142,7 @@ if not data.empty:
     else:
         data.index = data.index.tz_convert(eat_tz)
 
-    # Core Indicators
+    # Core Moving Averages
     data["EMA_9"] = data["Close"].ewm(span=9, adjust=False).mean()
     data["EMA_20"] = data["Close"].ewm(span=20, adjust=False).mean()
     data["EMA_50"] = data["Close"].ewm(span=50, adjust=False).mean()
@@ -169,14 +170,32 @@ if not data.empty:
     low_close = (data["Low"] - data["Close"].shift()).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     data["ATR"] = tr.ewm(span=14, adjust=False).mean()
+    data["ATR_MA"] = data["ATR"].rolling(window=20).mean()
 
-    # Market Structure (Swing Highs / Lows for BOS & CHoCH)
+    # ADX Calculation (Trend Strength)
+    up_move = data["High"] - data["High"].shift(1)
+    down_move = data["Low"].shift(1) - data["Low"]
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    tr_smoothed = tr.ewm(alpha=1/14, adjust=False).mean()
+    plus_di = 100 * (pd.Series(plus_dm, index=data.index).ewm(alpha=1/14, adjust=False).mean() / tr_smoothed)
+    minus_di = 100 * (pd.Series(minus_dm, index=data.index).ewm(alpha=1/14, adjust=False).mean() / tr_smoothed)
+
+    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+    data["ADX"] = dx.ewm(alpha=1/14, adjust=False).mean()
+
+    # Market Structure (Swings, BOS, CHoCH, Sweeps)
     swing_window = 10
     data["Swing_High"] = data["High"].rolling(window=swing_window).max().shift(1)
     data["Swing_Low"] = data["Low"].rolling(window=swing_window).min().shift(1)
 
     latest = data.iloc[-1]
+    prev_1 = data.iloc[-2]
+
     price = float(latest["Close"])
+    high_p = float(latest["High"])
+    low_p = float(latest["Low"])
     rsi = float(latest["RSI"])
     ema9 = float(latest["EMA_9"])
     ema20 = float(latest["EMA_20"])
@@ -184,30 +203,112 @@ if not data.empty:
     ema200 = float(latest["EMA_200"])
     macd_hist = float(latest["MACD_Hist"])
     atr_val = float(latest["ATR"])
+    atr_ma = float(latest["ATR_MA"]) if not pd.isna(latest["ATR_MA"]) else atr_val
+    adx_val = float(latest["ADX"]) if not pd.isna(latest["ADX"]) else 20.0
     swing_high = float(latest["Swing_High"])
     swing_low = float(latest["Swing_Low"])
 
-    # Structure Breaks
+    # ---------------------------------------------------------
+    # LAYER 1: MARKET REGIME DETECTOR
+    # ---------------------------------------------------------
+    regime = "RANGING / CHOPPY 🟡"
+    if adx_val >= 25 and price > ema200 and ema20 > ema50:
+        regime = "TRENDING BULLISH 📈"
+    elif adx_val >= 25 and price < ema200 and ema20 < ema50:
+        regime = "TRENDING BEARISH 📉"
+    elif atr_val > (atr_ma * 1.8):
+        regime = "HIGH VOLATILITY 🔥"
+    elif adx_val < 20:
+        regime = "RANGING / CHOPPY 🟡"
+    else:
+        regime = "TRANSITION / CONSOLIDATION 🔄"
+
+    # ---------------------------------------------------------
+    # LAYER 2: SETUP DETECTOR (MARKET STRUCTURE)
+    # ---------------------------------------------------------
     bos_bullish = price > swing_high
     bos_bearish = price < swing_low
 
-    # ---------------------------------------------------------
-    # 6. WEIGHTED CONFLUENCE SCORE & SIGNAL ENGINE
-    # ---------------------------------------------------------
-    htf_bullish = price > ema200 and ema50 > ema200
-    htf_bearish = price < ema200 and ema50 < ema200
+    choch_bullish = (prev_1["Close"] < swing_low) and (price > ema20)
+    choch_bearish = (prev_1["Close"] > swing_high) and (price < ema20)
+
+    sweep_bullish = (low_p < swing_low) and (price > swing_low)  # Liquidity sweep below low + rejection
+    sweep_bearish = (high_p > swing_high) and (price < swing_high) # Liquidity sweep above high + rejection
+
+    valid_setup = "NONE"
+    setup_description = "No structural setup detected."
+
+    if bos_bullish:
+        valid_setup = "BULLISH_BOS"
+        setup_description = f"Bullish Break of Structure (BOS) above ${swing_high:.{curr_info['dec']}f}"
+    elif bos_bearish:
+        valid_setup = "BEARISH_BOS"
+        setup_description = f"Bearish Break of Structure (BOS) below ${swing_low:.{curr_info['dec']}f}"
+    elif sweep_bullish:
+        valid_setup = "BULLISH_SWEEP"
+        setup_description = "Liquidity Sweep of Swing Low followed by bullish rejection."
+    elif sweep_bearish:
+        valid_setup = "BEARISH_SWEEP"
+        setup_description = "Liquidity Sweep of Swing High followed by bearish rejection."
+    elif choch_bullish:
+        valid_setup = "BULLISH_CHOCH"
+        setup_description = "Change of Character (CHoCH) shift to Bullish Momentum."
+    elif choch_bearish:
+        valid_setup = "BEARISH_CHOCH"
+        setup_description = "Change of Character (CHoCH) shift to Bearish Momentum."
 
     # Calculate Weighted Confluence Score (0 - 100)
     score = 0
-    if htf_bullish or htf_bearish: score += 25  # HTF Trend Alignment
-    if bos_bullish or bos_bearish: score += 25  # Market Structure Break
-    if (htf_bullish and macd_hist > 0) or (htf_bearish and macd_hist < 0): score += 20  # MACD Momentum
-    if (htf_bullish and 52 <= rsi <= 68) or (htf_bearish and 32 <= rsi <= 48): score += 20  # RSI Zone
-    if (ema9 > ema20 if htf_bullish else ema9 < ema20): score += 10  # Moving Average Cross
+    if "BULLISH" in regime and "BULLISH" in valid_setup: score += 35
+    if "BEARISH" in regime and "BEARISH" in valid_setup: score += 35
+    if valid_setup != "NONE": score += 25
+    if (ema9 > ema20 and macd_hist > 0) if "BULLISH" in valid_setup else (ema9 < ema20 and macd_hist < 0): score += 20
+    if (50 <= rsi <= 68) if "BULLISH" in valid_setup else (32 <= rsi <= 50): score += 20
 
-    confidence_pct = score
+    confidence_pct = min(score, 100)
 
-    # Check Cooldown State
+    # ---------------------------------------------------------
+    # LAYER 3: RISK & EXECUTION FILTER
+    # ---------------------------------------------------------
+    sl_mult = 1.5 if "Scalp" in trading_mode else 2.2
+    tp1_mult = sl_mult * min_rr_threshold
+
+    proposed_sl = 0.0
+    proposed_tp = 0.0
+    risk_passed = False
+    risk_reason = "Pending structure setup."
+
+    if "BULLISH" in valid_setup:
+        proposed_sl = price - (atr_val * sl_mult)
+        proposed_tp = price + (atr_val * tp1_mult)
+    elif "BEARISH" in valid_setup:
+        proposed_sl = price + (atr_val * sl_mult)
+        proposed_tp = price - (atr_val * tp1_mult)
+
+    sl_dist = abs(price - proposed_sl)
+    tp_dist = abs(proposed_tp - price)
+    calculated_rr = (tp_dist / sl_dist) if sl_dist > 0 else 0.0
+
+    # Risk Check Evaluations
+    if atr_val > (atr_ma * 2.2):
+        risk_passed = False
+        risk_reason = "REJECTED: Hyper-volatility anomaly detected (News/Spike Risk)."
+    elif regime == "RANGING / CHOPPY 🟡":
+        risk_passed = False
+        risk_reason = "REJECTED: Market is in a low-probability choppy range."
+    elif calculated_rr < min_rr_threshold:
+        risk_passed = False
+        risk_reason = f"REJECTED: RRR ({calculated_rr:.2f}) is below target threshold ({min_rr_threshold:.1f})."
+    elif valid_setup == "NONE":
+        risk_passed = False
+        risk_reason = "REJECTED: Lacks verified market structure setup (BOS/CHoCH/Sweep)."
+    else:
+        risk_passed = True
+        risk_reason = f"PASSED: RRR = 1:{calculated_rr:.2f} | Volatility Normal."
+
+    # ---------------------------------------------------------
+    # FINAL SIGNAL EVALUATION ENGINE
+    # ---------------------------------------------------------
     now_dt = datetime.now(eat_tz)
     cooldown_active = False
     mins_since_last = 0.0
@@ -216,32 +317,27 @@ if not data.empty:
         if mins_since_last < cooldown_period_mins:
             cooldown_active = True
 
-    # Signal Decision Logic
     signal = "NO TRADE ⚪"
-    reason = "Confluence threshold not met or market ranging."
+    reason = risk_reason if not risk_passed else "Awaiting threshold confluence."
     tp1, tp2, sl = 0.0, 0.0, 0.0
-
-    sl_mult = 1.5 if "Scalp" in trading_mode else 2.2
-    tp1_mult = 2.0 if "Scalp" in trading_mode else 3.0
-    tp2_mult = 3.5 if "Scalp" in trading_mode else 5.0
 
     if cooldown_active:
         signal = "COOLDOWN ⏳"
-        reason = f"System on buffer after recent entry. Unlocks in {int(cooldown_period_mins - mins_since_last)}m."
-    elif confidence_pct >= min_confluence_cutoff:
-        if htf_bullish and (bos_bullish or macd_hist > 0):
+        reason = f"System buffer active after recent entry. Unlocks in {int(cooldown_period_mins - mins_since_last)}m."
+    elif risk_passed and confidence_pct >= min_confluence_cutoff:
+        if "BULLISH" in valid_setup and "BULLISH" in regime:
             signal = "BUY EXECUTE 🚀"
-            reason = f"Strong Bullish Confluence ({confidence_pct}% score) + BOS above ${swing_high:.{curr_info['dec']}f}."
-            sl = price - (atr_val * sl_mult)
-            tp1 = price + (atr_val * tp1_mult)
-            tp2 = price + (atr_val * tp2_mult)
+            reason = f"Market Setup Verified ({valid_setup}) + {regime} + Risk Approved."
+            sl = proposed_sl
+            tp1 = proposed_tp
+            tp2 = price + (atr_val * (tp1_mult * 1.6))
             st.session_state.last_signal_time = now_dt
-        elif htf_bearish and (bos_bearish or macd_hist < 0):
+        elif "BEARISH" in valid_setup and "BEARISH" in regime:
             signal = "SELL EXECUTE 📉"
-            reason = f"Strong Bearish Confluence ({confidence_pct}% score) + BOS below ${swing_low:.{curr_info['dec']}f}."
-            sl = price + (atr_val * sl_mult)
-            tp1 = price - (atr_val * tp1_mult)
-            tp2 = price - (atr_val * tp2_mult)
+            reason = f"Market Setup Verified ({valid_setup}) + {regime} + Risk Approved."
+            sl = proposed_sl
+            tp1 = proposed_tp
+            tp2 = price - (atr_val * (tp1_mult * 1.6))
             st.session_state.last_signal_time = now_dt
 
     # Log Execution Signals
@@ -259,13 +355,16 @@ if not data.empty:
                 "status": "ACTIVE 🟡"
             })
             
-            # Record Feature Vector for Machine Learning Model Training
+            # Record Feature Vector for Machine Learning Pipeline
             st.session_state.ml_dataset.append({
                 "timestamp": now_str,
                 "price": price,
                 "rsi": rsi,
                 "macd_hist": macd_hist,
                 "atr": atr_val,
+                "adx": adx_val,
+                "regime": regime,
+                "setup": valid_setup,
                 "confidence_score": confidence_pct,
                 "signal": signal
             })
@@ -287,15 +386,15 @@ if not data.empty:
     # Top Metric Dashboard
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Live Market Price", f"${price:.{curr_info['dec']}f}")
-    c2.metric("Signal Status", signal)
-    c3.metric("Confluence Conviction", f"{confidence_pct}%")
+    c2.metric("Detected Regime", regime)
+    c3.metric("Signal Status", signal)
     c4.metric("Take Profit (Target)", f"${tp1:.{curr_info['dec']}f}" if tp1 else "N/A")
     c5.metric("Stop Loss (Safety)", f"${sl:.{curr_info['dec']}f}" if sl else "N/A")
 
-    st.info(f"💡 **Structural Confluence Analysis:** {reason}")
+    st.info(f"💡 **Decision Engine Status:** {reason} | **Setup Detected:** {setup_description}")
 
 # ---------------------------------------------------------
-# 7. TRADINGVIEW LIVE CHART ENGINE
+# 6. TRADINGVIEW LIVE CHART ENGINE
 # ---------------------------------------------------------
 st.divider()
 col_chart, col_side = st.columns([3, 1])
@@ -329,7 +428,7 @@ with col_chart:
     components.html(tv_html, height=530)
 
 # ---------------------------------------------------------
-# 8. SIGNAL HISTORY LOG & ACCURACY TRACKER
+# 7. SIGNAL HISTORY LOG & ACCURACY TRACKER
 # ---------------------------------------------------------
 with col_side:
     st.subheader("📋 Trade Journal")
@@ -337,7 +436,6 @@ with col_side:
     if st.session_state.signal_history:
         history_df = pd.DataFrame(st.session_state.signal_history).tail(8)
         
-        # Ensure missing keys on old session entries don't raise KeyError
         required_cols = ["time", "type", "entry", "confidence", "status"]
         for col in required_cols:
             if col not in history_df.columns:
@@ -356,10 +454,10 @@ with col_side:
         except Exception:
             st.dataframe(history_df)
     else:
-        st.caption("No signals triggered yet. High-confluence entries will auto-log here once score reaches your threshold.")
+        st.caption("No signals triggered yet. High-confluence entries will auto-log here once verified by the Decision Engine.")
 
 # ---------------------------------------------------------
-# 9. ECONOMIC NEWS GUARD & HIGH-IMPACT FEED
+# 8. ECONOMIC NEWS GUARD & HIGH-IMPACT FEED
 # ---------------------------------------------------------
 st.divider()
 st.subheader("📰 Real-Time Economic Event & Macro Calendar")
