@@ -260,13 +260,11 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
     # ---------------------------------------------------------
     # 7. ML FORWARD OUTCOME TARGET PROBABILITY (Walk-Forward Simulation)
     # ---------------------------------------------------------
-    # Target definition: Did price hit TP before SL within next 5 bars?
     ml_win_prob = 0.50
     if XGB_AVAILABLE and len(active_df) > 50:
         try:
             feat_cols = ["RSI", "MACD_Hist", "ATR", "EMA_8", "EMA_21", "EMA_50"]
             train_sub = active_df.copy()
-            # Scalping target: TP = +1.5*ATR hit before SL = -1.0*ATR within 5 forward bars
             tp_forward = train_sub["Close"] + (train_sub["ATR"] * 1.5)
             sl_forward = train_sub["Close"] - (train_sub["ATR"] * 1.0)
             
@@ -300,7 +298,6 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
     signal = "NEUTRAL / WAIT ⚪"
     sl, tp1, tp2 = 0.0, 0.0, 0.0
 
-    # Strict Rule: Must have matching directional structure bias (val_5m == 1 for Buy)
     if buy_score >= min_score_threshold and val_5m == 1 and ml_win_prob >= 0.50:
         signal = "BUY EXECUTE 🚀"
         sl = price - (atr * 0.9)
@@ -312,7 +309,6 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
         tp1 = price - (atr * 1.5)
         tp2 = price - (atr * 2.5)
 
-    # Unique Signal ID generation to fix cooldown looping bugs
     current_candle_timestamp = str(active_df.index[-1])
     signal_id = f"{selected_asset}_{interval}_{signal}_{current_candle_timestamp}"
 
@@ -331,18 +327,27 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
                 "status": "ACTIVE ⚡"
             })
 
-    # Update active trades in Journal
+    # ---------------------------------------------------------
+    # 9. UPDATE ACTIVE TRADES USING CANDLE WICKS (HIGH / LOW)
+    # ---------------------------------------------------------
+    current_high = float(latest["High"])
+    current_low = float(latest["Low"])
+
     for item in st.session_state.master_history:
         if item["status"] == "ACTIVE ⚡" and item["asset"] == selected_asset:
             if "BUY" in item["action"]:
-                if price >= item["tp1"]: item["status"] = "WIN (TP) ✅"
-                elif price <= item["sl"]: item["status"] = "LOSS (SL) ❌"
+                if current_high >= item["tp1"]: 
+                    item["status"] = "WIN (TP) ✅"
+                elif current_low <= item["sl"]: 
+                    item["status"] = "LOSS (SL) ❌"
             elif "SELL" in item["action"]:
-                if price <= item["tp1"]: item["status"] = "WIN (TP) ✅"
-                elif price >= item["sl"]: item["status"] = "LOSS (SL) ❌"
+                if current_low <= item["tp1"]: 
+                    item["status"] = "WIN (TP) ✅"
+                elif current_high >= item["sl"]: 
+                    item["status"] = "LOSS (SL) ❌"
 
     # ---------------------------------------------------------
-    # 9. LLM SYNTHESIS & DASHBOARD UI METRICS
+    # 10. LLM SYNTHESIS & DASHBOARD UI METRICS
     # ---------------------------------------------------------
     def generate_institutional_synthesis(sig, b_score, s_score, reg, ml_p, h_mins):
         return (
@@ -367,7 +372,7 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
         st.success(f"🎯 **Institutional Setup Executed:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **TP2:** `${tp2:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}`")
 
     # ---------------------------------------------------------
-    # 10. TRADINGVIEW TERMINAL & MASTER JOURNAL
+    # 11. TRADINGVIEW TERMINAL & MASTER JOURNAL (WITH TP/SL DISPLAY)
     # ---------------------------------------------------------
     st.divider()
     chart_col, journal_col = st.columns([3, 1])
@@ -404,7 +409,8 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
         st.subheader("📋 Master Journal")
         if st.session_state.master_history:
             j_df = pd.DataFrame(st.session_state.master_history).tail(8)
-            cols = ["time", "action", "entry", "score", "status"]
+            # Explicitly include tp1 and sl in the viewable columns
+            cols = ["time", "action", "entry", "tp1", "sl", "score", "status"]
             j_df = j_df[[c for c in cols if c in j_df.columns]]
             
             wins = len(j_df[j_df["status"].str.contains("WIN")])
@@ -417,7 +423,7 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
             st.caption("Awaiting institutional multi-TF triggers.")
 
     # ---------------------------------------------------------
-    # 11. MACROECONOMIC NEWS FEED
+    # 12. MACROECONOMIC NEWS FEED
     # ---------------------------------------------------------
     st.divider()
     st.subheader("📰 Macro News & Liquidity Feed")
@@ -440,3 +446,4 @@ if not active_df.empty and not df_1h.empty and not df_15m.empty and not df_5m.em
     components.html(news_html, height=360)
 else:
     st.warning("⚠️ Market data feed synchronizing across multi-timeframe intervals. Please wait...")
+        
