@@ -2,12 +2,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
-import requests
 from datetime import datetime
 import pytz
 from streamlit_autorefresh import st_autorefresh
+import yfinance as yf
 
-# Optional ML Library Guards
+# Optional ML & GenAI Guards
 try:
     import xgboost as xgb
     XGB_AVAILABLE = True
@@ -24,6 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Auto-refresh timer for live polling (every 15 seconds)
 st_autorefresh(interval=15000, key="minion_institutional_refresh")
 
 st.markdown("""
@@ -52,6 +53,15 @@ st.markdown("""
         font-size: 13px;
         margin-top: 4px;
     }
+    .ai-box {
+        background-color: #0d131f;
+        border-left: 4px solid #00ffcc;
+        padding: 15px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+        font-family: monospace;
+        font-size: 13px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,7 +76,7 @@ if "last_signal_id" not in st.session_state:
 st.markdown("""
 <div class="minion-header">
     <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
-    <div class="minion-subtitle">Multi-TF Alignment • Live Twelve Data Feed • Dynamic Scoring • State Guard</div>
+    <div class="minion-subtitle">Multi-Indicator Confluence • Scalp & Hold Horizon • Free Data Feed • AI Breakdown</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -88,19 +98,17 @@ updateClock();
 components.html(clock_html, height=45)
 
 # ---------------------------------------------------------
-# 3. SIDEBAR CONTROLS
+# 3. SIDEBAR CONTROLS (HORIZON & STRATEGY SELECTION)
 # ---------------------------------------------------------
-st.sidebar.header("🔑 Data Feed")
-api_key = st.sidebar.text_input("Twelve Data API Key", type="password")
-
-st.sidebar.header("🎯 Scalp & Hold Horizon")
+st.sidebar.header("🎯 Strategy & Horizon Setup")
 execution_mode = st.sidebar.selectbox(
-    "Select Strategy Horizon",
+    "Select Operating Horizon",
     [
-        "1-Minute Micro Scalp (1m Hold)",
-        "5-Minute Fast Scalp (5m Hold)",
-        "15-Minute Scalp Trend (15m Hold)",
-        "30-Minute Intraday Hold (30m Hold)"
+        "1-Minute Micro Scalp (Scalp Mode)",
+        "5-Minute Momentum Scalp (Scalp Mode)",
+        "15-Minute Trend Scalp (Scalp/Hold)",
+        "1-Hour Swing Position (Hold Mode)",
+        "4-Hour Macro Trend (Hold Mode)"
     ]
 )
 
@@ -110,101 +118,87 @@ selected_asset = st.sidebar.selectbox(
 )
 
 asset_map = {
-    "Gold (Spot XAU/USD)": {"td": "XAU/USD", "tv": "OANDA:XAUUSD", "dec": 2},
-    "EUR/USD": {"td": "EUR/USD", "tv": "FX:EURUSD", "dec": 4},
-    "GBP/USD": {"td": "GBP/USD", "tv": "FX:GBPUSD", "dec": 4}
+    "Gold (Spot XAU/USD)": {"yf": "GC=F", "tv": "OANDA:XAUUSD", "dec": 2},
+    "EUR/USD": {"yf": "EURUSD=X", "tv": "FX:EURUSD", "dec": 4},
+    "GBP/USD": {"yf": "GBPUSD=X", "tv": "FX:GBPUSD", "dec": 4}
 }
 curr_info = asset_map[selected_asset]
 
+# Map horizons to yfinance parameters
 if "1-Minute" in execution_mode:
-    interval, max_hold, td_interval = "1m", 1, "1min"
+    interval, yf_interval, atr_mult_tp = "1m", "1m", 1.5
 elif "5-Minute" in execution_mode:
-    interval, max_hold, td_interval = "5m", 5, "5min"
+    interval, yf_interval, atr_mult_tp = "5m", "5m", 1.8
 elif "15-Minute" in execution_mode:
-    interval, max_hold, td_interval = "15m", 15, "15min"
+    interval, yf_interval, atr_mult_tp = "15m", "15m", 2.2
+elif "1-Hour" in execution_mode:
+    interval, yf_interval, atr_mult_tp = "1h", "1h", 3.0
 else:
-    interval, max_hold, td_interval = "30m", 30, "30min"
+    interval, yf_interval, atr_mult_tp = "4h", "1h", 4.5  # Simulated 4h view
 
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
 
-if not api_key:
-    st.warning("👈 Enter your Twelve Data API key in the sidebar to start receiving live data.")
-    st.stop()
-
 # ---------------------------------------------------------
-# 4. LIVE DATA ENGINE (Twelve Data)
+# 4. FREE LIVE DATA ENGINE (yfinance)
 # ---------------------------------------------------------
 @st.cache_data(ttl=15, show_spinner=False)
-def fetch_live_market_data(symbol, td_interval, key):
-    url = "https://api.twelvedata.com/time_series"
-    params = {
-        "symbol": symbol,
-        "interval": td_interval,
-        "outputsize": 150,
-        "apikey": key,
-        "timezone": "UTC"
-    }
+def fetch_free_live_data(ticker, period_interval):
     try:
-        resp = requests.get(url, params=params, timeout=10)
-        payload = resp.json()
+        period_val = "5d" if period_interval in ["1m", "5m", "15m"] else "60d"
+        df = yf.download(ticker, period=period_val, interval=period_interval, progress=False)
+        if df.empty:
+            return None, "No data returned from Yahoo Finance."
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)
+        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+        return df, None
     except Exception as e:
-        return None, f"Network error contacting Twelve Data: {e}"
+        return None, f"Data Fetch Error: {e}"
 
-    if payload.get("status") == "error" or "values" not in payload:
-        return None, payload.get("message", "Unknown error from Twelve Data (check symbol/plan limits).")
-
-    df = pd.DataFrame(payload["values"])
-    df["datetime"] = pd.to_datetime(df["datetime"])
-    df = df.set_index("datetime").sort_index()
-    df = df.rename(columns={
-        "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"
-    })
-    for c in ["Open", "High", "Low", "Close"]:
-        df[c] = df[c].astype(float)
-    df["Volume"] = df["Volume"].astype(float) if "Volume" in df.columns else 0.0
-
-    return df[["Open", "High", "Low", "Close", "Volume"]], None
-
-with st.spinner("Syncing data with live market feeds..."):
-    raw_df, fetch_error = fetch_live_market_data(curr_info["td"], td_interval, api_key)
+with st.spinner("Syncing comprehensive data feeds..."):
+    raw_df, fetch_error = fetch_free_live_data(curr_info["yf"], yf_interval)
 
 if fetch_error:
-    st.error(f"⚠️ Live Feed API Error: {fetch_error}")
+    st.error(f"⚠️ Live Feed Error: {fetch_error}")
     st.stop()
 
-# 🔍 DEBUG — tells us if fresh candles are actually arriving. Remove once confirmed working.
-st.session_state['_debug_refresh'] = st.session_state.get('_debug_refresh', 0) + 1
-st.caption(
-    f"🔍 Last candle: {raw_df.index[-1]} | Now (UTC): {datetime.utcnow()} | "
-    f"Rows: {len(raw_df)} | Refresh #: {st.session_state['_debug_refresh']}"
-)
-
 # ---------------------------------------------------------
-# 5. TECHNICAL INDICATORS & SIGNAL GENERATION
+# 5. TECHNICAL INDICATORS & CONFLUENCE SCORING
 # ---------------------------------------------------------
 eat_tz = pytz.timezone("Africa/Nairobi")
 
-def process_indicators(df):
-    if df.empty:
+def process_all_indicators(df):
+    if df.empty: 
         return df
     if df.index.tz is None:
         df.index = df.index.tz_localize("UTC").tz_convert(eat_tz)
     else:
         df.index = df.index.tz_convert(eat_tz)
-
+        
+    # Moving Averages (Fast, Medium, Slow, Trend Baseline)
     df["EMA_8"] = df["Close"].ewm(span=8, adjust=False).mean()
     df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
     df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
-
+    df["SMA_200"] = df["Close"].rolling(window=200).mean()
+    
+    # RSI
     delta = df["Close"].diff()
     gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
     loss = -delta.where(delta < 0, 0).ewm(alpha=1/14, adjust=False).mean()
     df["RSI"] = 100 - (100 / (1 + (gain / loss)))
-
+    
+    # MACD
     df["MACD"] = df["Close"].ewm(span=12).mean() - df["Close"].ewm(span=26).mean()
     df["MACD_Sig"] = df["MACD"].ewm(span=9).mean()
     df["MACD_Hist"] = df["MACD"] - df["MACD_Sig"]
-
+    
+    # Bollinger Bands
+    df["BB_Mid"] = df["Close"].rolling(window=20).mean()
+    bb_std = df["Close"].rolling(window=20).std()
+    df["BB_Upper"] = df["BB_Mid"] + (bb_std * 2)
+    df["BB_Lower"] = df["BB_Mid"] - (bb_std * 2)
+    
+    # ATR for Volatility / Risk
     tr = pd.concat([
         df["High"] - df["Low"],
         (df["High"] - df["Close"].shift()).abs(),
@@ -213,7 +207,7 @@ def process_indicators(df):
     df["ATR"] = tr.ewm(span=14, adjust=False).mean()
     return df.dropna()
 
-active_df = process_indicators(raw_df)
+active_df = process_all_indicators(raw_df)
 
 if not active_df.empty:
     latest = active_df.iloc[-1]
@@ -221,33 +215,59 @@ if not active_df.empty:
     atr = float(latest["ATR"])
     rsi = float(latest["RSI"])
     macd_hist = float(latest["MACD_Hist"])
+    ema_8 = float(latest["EMA_8"])
+    ema_21 = float(latest["EMA_21"])
+    ema_50 = float(latest["EMA_50"])
 
-    def get_swing_bias(df_sub):
-        if len(df_sub) < 15:
-            return "RANGING", 0
-        sw_high = df_sub["High"].rolling(window=5).max()
-        sw_low = df_sub["Low"].rolling(window=5).min()
-        curr_c = df_sub["Close"].iloc[-1]
+    # Multi-Indicator Confluence Check
+    def evaluate_confluence(row, df_sub):
+        b_score, s_score = 50, 50
+        reasons_buy = []
+        reasons_sell = []
 
-        if curr_c > sw_high.iloc[-2]:
-            return "BULLISH BOS", 1
-        elif curr_c < sw_low.iloc[-2]:
-            return "BEARISH BOS", -1
-        return "RANGING", 0
+        # 1. EMA Ribbon Cross
+        if row["EMA_8"] > row["EMA_21"] > row["EMA_50"]:
+            b_score += 15
+            reasons_buy.append("EMA Ribbon aligned bullish (8 > 21 > 50)")
+        elif row["EMA_8"] < row["EMA_21"] < row["EMA_50"]:
+            s_score += 15
+            reasons_sell.append("EMA Ribbon aligned bearish (8 < 21 < 50)")
 
-    bias_val = get_swing_bias(active_df)[1]
-    market_regime = "TRENDING BULLISH 📈" if bias_val == 1 else ("TRENDING BEARISH 📉" if bias_val == -1 else "RANGING CONSOLIDATION 🟡")
+        # 2. MACD Histogram Momentum
+        if row["MACD_Hist"] > 0:
+            b_score += 15
+            reasons_buy.append("MACD momentum is positive")
+        else:
+            s_score += 15
+            reasons_sell.append("MACD momentum is negative")
 
-    buy_score = 50 + (25 if bias_val >= 1 else 0) + (15 if macd_hist > 0 else 0) + (10 if rsi > 50 else 0)
-    sell_score = 50 + (25 if bias_val <= -1 else 0) + (15 if macd_hist < 0 else 0) + (10 if rsi < 50 else 0)
+        # 3. RSI Zone Evaluation
+        if 50 < row["RSI"] < 75:
+            b_score += 10
+            reasons_buy.append(f"RSI bullish zone ({row['RSI']:.1f})")
+        elif 25 < row["RSI"] < 50:
+            s_score += 10
+            reasons_sell.append(f"RSI bearish zone ({row['RSI']:.1f})")
 
+        # 4. Bollinger Band Interaction
+        if row["Close"] <= row["BB_Lower"]:
+            b_score += 10
+            reasons_buy.append("Price testing lower Bollinger Band (Mean Reversion / Bounce)")
+        elif row["Close"] >= row["BB_Upper"]:
+            s_score += 10
+            reasons_sell.append("Price testing upper Bollinger Band (Overextended)")
+
+        return b_score, s_score, reasons_buy, reasons_sell
+
+    buy_score, s_score, buy_reasons, sell_reasons = evaluate_confluence(latest, active_df)
+
+    # Machine Learning Edge Calculation
     ml_win_prob = 0.55
     if XGB_AVAILABLE and len(active_df) > 30:
         try:
             feat_cols = ["RSI", "MACD_Hist", "ATR", "EMA_8", "EMA_21", "EMA_50"]
             train_sub = active_df.copy()
-            tp_forward = train_sub["Close"] + (train_sub["ATR"] * 1.5)
-
+            tp_forward = train_sub["Close"] + (train_sub["ATR"] * atr_mult_tp)
             outcome = [1 if (train_sub["High"].iloc[i+1:i+3] >= tp_forward.iloc[i]).any() else 0 for i in range(len(train_sub) - 3)]
             if len(outcome) > 20:
                 train_sub = train_sub.iloc[:len(outcome)]
@@ -260,17 +280,20 @@ if not active_df.empty:
 
     signal = "NEUTRAL / WAIT ⚪"
     sl, tp1, tp2 = 0.0, 0.0, 0.0
+    active_reasons = []
 
-    if buy_score >= min_score_threshold:
+    if buy_score >= min_score_threshold and buy_score >= s_score:
         signal = "BUY EXECUTE 🚀"
-        sl = price - (atr * 0.9)
-        tp1 = price + (atr * 1.5)
-        tp2 = price + (atr * 2.5)
-    elif sell_score >= min_score_threshold:
+        sl = price - (atr * 1.0)
+        tp1 = price + (atr * atr_mult_tp)
+        tp2 = price + (atr * (atr_mult_tp * 1.6))
+        active_reasons = buy_reasons
+    elif s_score >= min_score_threshold and s_score > buy_score:
         signal = "SELL EXECUTE 📉"
-        sl = price + (atr * 0.9)
-        tp1 = price - (atr * 1.5)
-        tp2 = price - (atr * 2.5)
+        sl = price + (atr * 1.0)
+        tp1 = price - (atr * atr_mult_tp)
+        tp2 = price - (atr * (atr_mult_tp * 1.6))
+        active_reasons = sell_reasons
 
     current_candle_timestamp = str(active_df.index[-1])
     signal_id = f"{selected_asset}_{interval}_{signal}_{current_candle_timestamp}"
@@ -286,36 +309,49 @@ if not active_df.empty:
                 "entry": round(price, curr_info["dec"]),
                 "tp1": round(tp1, curr_info["dec"]),
                 "sl": round(sl, curr_info["dec"]),
-                "score": f"Buy:{buy_score} | Sell:{sell_score}",
+                "score": f"Buy:{buy_score} | Sell:{s_score}",
                 "status": "ACTIVE ⚡"
             })
 
     for item in st.session_state.master_history:
         if item["status"] == "ACTIVE ⚡" and item["asset"] == selected_asset:
             if "BUY" in item["action"]:
-                if price >= item["tp1"]:
-                    item["status"] = "WIN (TP) ✅"
-                elif price <= item["sl"]:
-                    item["status"] = "LOSS (SL) ❌"
+                if price >= item["tp1"]: item["status"] = "WIN (TP) ✅"
+                elif price <= item["sl"]: item["status"] = "LOSS (SL) ❌"
             elif "SELL" in item["action"]:
-                if price <= item["tp1"]:
-                    item["status"] = "WIN (TP) ✅"
-                elif price >= item["sl"]:
-                    item["status"] = "LOSS (SL) ❌"
+                if price <= item["tp1"]: item["status"] = "WIN (TP) ✅"
+                elif price >= item["sl"]: item["status"] = "LOSS (SL) ❌"
 
+    # ---------------------------------------------------------
+    # 6. DASHBOARD DISPLAY & AI EXPLANATION LAYER
+    # ---------------------------------------------------------
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Live Market Price", f"${price:.{curr_info['dec']}f}")
-    col2.metric("Market Regime", market_regime.split()[0])
+    col1.metric("Live Price", f"${price:.{curr_info['dec']}f}")
+    col2.metric("Horizon Mode", execution_mode.split("(")[1].replace(")", ""))
     col3.metric("Signal Output", signal)
-    col4.metric("Buy vs Sell Score", f"{buy_score} / {sell_score}")
-    col5.metric("ML Win Edge", f"{ml_win_prob*100:.1f}%")
+    col4.metric("Confluence Score", f"B:{buy_score} | S:{s_score}")
+    col5.metric("AI Confidence Edge", f"{ml_win_prob*100:.1f}%")
 
-    if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
-        st.success(f"🎯 **Setup Executed:** Entry: `${price:.{curr_info['dec']}f}` | **TP1:** `${tp1:.{curr_info['dec']}f}` | **SL:** `${sl:.{curr_info['dec']}f}`")
+    # AI Analyst Explanation Panel
+    st.markdown("### 🤖 AI Market Analyst Explanation")
+    reason_bullet_str = "".join([f"<li>{r}</li>" for r in active_reasons]) if active_reasons else "<li>Market conditions are currently mixed; awaiting clearer confirmation across indicators.</li>"
+    
+    ai_explanation_html = f"""
+    <div class="ai-box">
+        <b>Current Analysis Breakdown ({selected_asset} @ {interval}):</b><br>
+        The engine scanned price action using multi-indicator confluence (EMA ribbons, RSI momentum, MACD histogram, and Bollinger Band boundaries).<br><br>
+        <b>Detected Factors:</b>
+        <ul>
+            {reason_bullet_str}
+        </ul>
+        <b>Execution Outlook:</b> Current sentiment score yields a <b>{max(buy_score, s_score)}/100</b> rating with an estimated model win probability of <b>{ml_win_prob*100:.1f}%</b> under a {execution_mode}.
+    </div>
+    """
+    st.markdown(ai_explanation_html, unsafe_allow_html=True)
 
     st.divider()
     chart_col, journal_col = st.columns([3, 1])
-    tv_tf = {"1m": "1", "5m": "5", "15m": "15", "30m": "30"}.get(interval, "1")
+    tv_tf = {"1m": "1", "5m": "5", "15m": "15", "1h": "60", "4h": "240"}.get(interval, "1")
 
     with chart_col:
         st.subheader(f"📊 Live TradingView Terminal ({selected_asset} - {interval})")
@@ -346,16 +382,20 @@ if not active_df.empty:
         st.subheader("📋 Master Journal")
         if st.session_state.master_history:
             j_df = pd.DataFrame(st.session_state.master_history).tail(8)
-            cols = ["time", "action", "entry", "tp1", "sl", "score", "status"]
+            cols = ["time", "horizon", "action", "entry", "tp1", "sl", "status"]
             j_df = j_df[[c for c in cols if c in j_df.columns]]
-
+            
             wins = len(j_df[j_df["status"].str.contains("WIN")])
             total_closed = len(j_df[~j_df["status"].str.contains("ACTIVE")])
             win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
-
+            
             st.metric("Model Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Completed")
             st.dataframe(j_df, use_container_width=True)
         else:
             st.caption("Awaiting signals.")
 else:
     st.error("⚠️ Unable to process indicator data.")
+
+[Advanced Python AI Multi-Agent Tutorial](https://www.youtube.com/watch?v=msLovKSj8Q0)
+
+This video provides valuable insights into structuring multi-indicator decision workflows and AI-driven automation inside Python dashboard applications.
