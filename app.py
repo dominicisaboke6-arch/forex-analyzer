@@ -124,7 +124,6 @@ asset_map = {
 }
 curr_info = asset_map[selected_asset]
 
-# Map horizons to yfinance parameters
 if "1-Minute" in execution_mode:
     interval, yf_interval, atr_mult_tp = "1m", "1m", 1.5
 elif "5-Minute" in execution_mode:
@@ -134,7 +133,7 @@ elif "15-Minute" in execution_mode:
 elif "1-Hour" in execution_mode:
     interval, yf_interval, atr_mult_tp = "1h", "1h", 3.0
 else:
-    interval, yf_interval, atr_mult_tp = "4h", "1h", 4.5  # Simulated 4h view
+    interval, yf_interval, atr_mult_tp = "4h", "1h", 4.5
 
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
 
@@ -175,30 +174,25 @@ def process_all_indicators(df):
     else:
         df.index = df.index.tz_convert(eat_tz)
         
-    # Moving Averages (Fast, Medium, Slow, Trend Baseline)
     df["EMA_8"] = df["Close"].ewm(span=8, adjust=False).mean()
     df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
     df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
     df["SMA_200"] = df["Close"].rolling(window=200).mean()
     
-    # RSI
     delta = df["Close"].diff()
     gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
     loss = -delta.where(delta < 0, 0).ewm(alpha=1/14, adjust=False).mean()
     df["RSI"] = 100 - (100 / (1 + (gain / loss)))
     
-    # MACD
     df["MACD"] = df["Close"].ewm(span=12).mean() - df["Close"].ewm(span=26).mean()
     df["MACD_Sig"] = df["MACD"].ewm(span=9).mean()
     df["MACD_Hist"] = df["MACD"] - df["MACD_Sig"]
     
-    # Bollinger Bands
     df["BB_Mid"] = df["Close"].rolling(window=20).mean()
     bb_std = df["Close"].rolling(window=20).std()
     df["BB_Upper"] = df["BB_Mid"] + (bb_std * 2)
     df["BB_Lower"] = df["BB_Mid"] - (bb_std * 2)
     
-    # ATR for Volatility / Risk
     tr = pd.concat([
         df["High"] - df["Low"],
         (df["High"] - df["Close"].shift()).abs(),
@@ -215,17 +209,12 @@ if not active_df.empty:
     atr = float(latest["ATR"])
     rsi = float(latest["RSI"])
     macd_hist = float(latest["MACD_Hist"])
-    ema_8 = float(latest["EMA_8"])
-    ema_21 = float(latest["EMA_21"])
-    ema_50 = float(latest["EMA_50"])
 
-    # Multi-Indicator Confluence Check
     def evaluate_confluence(row, df_sub):
         b_score, s_score = 50, 50
         reasons_buy = []
         reasons_sell = []
 
-        # 1. EMA Ribbon Cross
         if row["EMA_8"] > row["EMA_21"] > row["EMA_50"]:
             b_score += 15
             reasons_buy.append("EMA Ribbon aligned bullish (8 > 21 > 50)")
@@ -233,7 +222,6 @@ if not active_df.empty:
             s_score += 15
             reasons_sell.append("EMA Ribbon aligned bearish (8 < 21 < 50)")
 
-        # 2. MACD Histogram Momentum
         if row["MACD_Hist"] > 0:
             b_score += 15
             reasons_buy.append("MACD momentum is positive")
@@ -241,7 +229,6 @@ if not active_df.empty:
             s_score += 15
             reasons_sell.append("MACD momentum is negative")
 
-        # 3. RSI Zone Evaluation
         if 50 < row["RSI"] < 75:
             b_score += 10
             reasons_buy.append(f"RSI bullish zone ({row['RSI']:.1f})")
@@ -249,7 +236,6 @@ if not active_df.empty:
             s_score += 10
             reasons_sell.append(f"RSI bearish zone ({row['RSI']:.1f})")
 
-        # 4. Bollinger Band Interaction
         if row["Close"] <= row["BB_Lower"]:
             b_score += 10
             reasons_buy.append("Price testing lower Bollinger Band (Mean Reversion / Bounce)")
@@ -261,7 +247,6 @@ if not active_df.empty:
 
     buy_score, s_score, buy_reasons, sell_reasons = evaluate_confluence(latest, active_df)
 
-    # Machine Learning Edge Calculation
     ml_win_prob = 0.55
     if XGB_AVAILABLE and len(active_df) > 30:
         try:
@@ -332,7 +317,6 @@ if not active_df.empty:
     col4.metric("Confluence Score", f"B:{buy_score} | S:{s_score}")
     col5.metric("AI Confidence Edge", f"{ml_win_prob*100:.1f}%")
 
-    # AI Analyst Explanation Panel
     st.markdown("### 🤖 AI Market Analyst Explanation")
     reason_bullet_str = "".join([f"<li>{r}</li>" for r in active_reasons]) if active_reasons else "<li>Market conditions are currently mixed; awaiting clearer confirmation across indicators.</li>"
     
@@ -395,7 +379,3 @@ if not active_df.empty:
             st.caption("Awaiting signals.")
 else:
     st.error("⚠️ Unable to process indicator data.")
-
-[Advanced Python AI Multi-Agent Tutorial](https://www.youtube.com/watch?v=msLovKSj8Q0)
-
-This video provides valuable insights into structuring multi-indicator decision workflows and AI-driven automation inside Python dashboard applications.
