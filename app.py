@@ -25,7 +25,7 @@ st.set_page_config(
 )
 
 # Auto-refresh timer for live polling (every 15 seconds)
-st_autorefresh(interval=15000, key="minion_institutional_refresh")
+st_autorefresh(interval=15000, key="minion_refresh")
 
 st.markdown("""
 <style>
@@ -75,7 +75,7 @@ if "last_signal_id" not in st.session_state:
 # ---------------------------------------------------------
 st.markdown("""
 <div class="minion-header">
-    <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
+    <div class="minion-title">⚡ MINION  SCALP & HOLD ENGINE ⚡</div>
     <div class="minion-subtitle">Multi-Indicator Confluence • Scalp & Hold Horizon • Free Data Feed • AI Breakdown</div>
 </div>
 """, unsafe_allow_html=True)
