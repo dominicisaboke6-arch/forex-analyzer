@@ -18,7 +18,7 @@ except ImportError:
 # 1. PAGE CONFIGURATION & INITIALIZATION
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="MINION Institutional Multi-TF Alpha Engine",
+    page_title="MINION Multi-TF Alpha Engine",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
