@@ -98,12 +98,10 @@ updateClock();
 components.html(clock_html, height=45)
 
 # ---------------------------------------------------------
-# 3. SECRETS OR SIDEBAR API CONFIGURATION
+# 3. API CONFIGURATION & STRATEGY SETUP
 # ---------------------------------------------------------
-try:
-    api_key = st.secrets["TWELVE_DATA_API_KEY"]
-except Exception:
-    api_key = st.sidebar.text_input("🔑 Twelve Data API Key", type="password")
+# API Key is now hardcoded as requested
+api_key = "a8c4eb7e1e424e479ea4c2f57b80fa65"
 
 st.sidebar.header("🎯 Strategy & Horizon Setup")
 execution_mode = st.sidebar.selectbox(
@@ -141,10 +139,6 @@ else:
     interval, td_interval, atr_mult_tp = "4h", "4h", 4.5
 
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
-
-if not api_key:
-    st.sidebar.warning("⚠️ Please enter your Twelve Data API key above or configure it in your Streamlit Secrets.")
-    st.stop()
 
 # ---------------------------------------------------------
 # 4. REAL-TIME DATA ENGINE (Twelve Data with Volume Safety)
@@ -403,29 +397,30 @@ if not active_df.empty:
             st.caption("Awaiting signals.")
 
     # ---------------------------------------------------------
-    # 7. INTERACTIVE AI ASSISTANT CHAT
+    # 7. INTERACTIVE AI ASSISTANT CHAT (Omni-Market Upgrade)
     # ---------------------------------------------------------
     st.divider()
     st.subheader("💬 Ask MINION AI Assistant")
 
     if "chat_messages" not in st.session_state:
         st.session_state.chat_messages = [
-            {"role": "assistant", "content": f"Hello! I am your {selected_asset} market assistant. Ask me anything about current indicators, risk parameters, or trade setups."}
+            {"role": "assistant", "content": f"Hello! I am your {selected_asset} market assistant. Ask me anything about live indicators, trade setups, trading strategies, macroeconomics, or market concepts."}
         ]
 
     for message in st.session_state.chat_messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    if user_query := st.chat_input("Ask about current signals, RSI levels, or trade rules..."):
+    if user_query := st.chat_input("Ask about signals, indicators, strategies, or general market questions..."):
         st.session_state.chat_messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
 
         with st.chat_message("assistant"):
-            with st.spinner("Analyzing market parameters..."):
+            with st.spinner("Processing inquiry..."):
                 query_lower = user_query.lower()
                 
+                # 1. Live Context Checks
                 if "price" in query_lower:
                     reply = f"The current live price for {selected_asset} on the {interval} timeframe is **${price:.{curr_info['dec']}f}**."
                 elif "score" in query_lower or "confluence" in query_lower:
@@ -436,8 +431,26 @@ if not active_df.empty:
                     reply = f"The current active signal output is: **{signal}**."
                 elif "sl" in query_lower or "stop" in query_lower or "tp" in query_lower:
                     reply = f"Current risk parameters — Stop Loss (SL): **${sl:.{curr_info['dec']}f}** | Take Profit 1 (TP1): **${tp1:.{curr_info['dec']}f}**."
+                
+                # 2. General Trading & Market Knowledge Fallbacks
+                elif "trend" in query_lower:
+                    reply = "A market trend describes the general direction in which an asset's price is moving over a specific interval. Trends can be upward (bullish), downward (bearish), or sideways (ranging). Using tools like EMA ribbons helps confirm trend continuity."
+                elif "support" in query_lower or "resistance" in query_lower:
+                    reply = "Support levels are price floors where buying interest tends to overcome selling pressure, preventing further drops. Resistance levels are price ceilings where selling pressure overcomes buying interest, halting upward movement."
+                elif "risk" in query_lower or "management" in query_lower:
+                    reply = "Institutional risk management relies on strict risk-to-reward ratios, position sizing based on Average True Range (ATR), and never risking more than 1% to 2% of total capital on a single trade setup."
+                elif "scalp" in query_lower:
+                    reply = "Scalping involves taking advantage of small price changes over micro-timeframes (like 1m or 5m charts). It requires tight stop losses, high execution speed, and strict adherence to momentum indicators."
+                elif "strategy" in query_lower or "how to use" in query_lower:
+                    reply = f"To trade effectively with MINION, monitor the composite score threshold ({min_score_threshold}/100). Wait for multi-indicator confluence—such as aligned EMAs and positive MACD histograms—before executing within your chosen {execution_mode}."
+                
+                # 3. Dynamic General Catch-All
                 else:
-                    reply = f"Based on the active {execution_mode}, the market is currently reading a composite score of Buy: {buy_score} and Sell: {s_score}. Ask me specific questions about **price**, **RSI**, **scores**, **signals**, or **stop loss**!"
+                    reply = (
+                        f"That's a great question regarding the markets. While I am primarily tuned to monitor **{selected_asset}** under your active **{execution_mode}**, "
+                        f"general market success relies on solid risk management, structural multi-timeframe alignment, and keeping a close eye on momentum indicators like RSI and MACD. "
+                        f"Feel free to ask me specifics about **price**, **RSI**, **scores**, **signals**, **support/resistance**, or **risk management**!"
+                    )
                 
                 st.markdown(reply)
                 st.session_state.chat_messages.append({"role": "assistant", "content": reply})
