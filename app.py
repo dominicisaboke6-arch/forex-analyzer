@@ -1,21 +1,23 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
 
 # ==========================================
-# 1. CONFIGURATION & SECRETS MANAGEMENT
+# 1. DASHBOARD CONFIG & SIDEBAR SETTINGS
 # ==========================================
-# In production, store these in st.secrets or environment variables
-OANDA_API_TOKEN = st.sidebar.text_input("OANDA API Token", type="password")
-OANDA_ACCOUNT_ID = st.sidebar.text_input("OANDA Account ID")
-ENVIRONMENT = st.sidebar.selectbox("Environment", ["practice", "live"])
+st.set_page_config(
+    page_title="Institutional Multi-TF Alpha Engine", 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
 
-# Determine base URL based on environment
-if ENVIRONMENT == "practice":
-    BASE_URL = f"https://api-fxpractice.oanda.com/v20/accounts/{OANDA_ACCOUNT_ID}"
-else:
-    BASE_URL = f"https://api-fxtrade.oanda.com/v20/accounts/{OANDA_ACCOUNT_ID}"
+st.sidebar.title("🔑 OANDA Connection Portal")
+OANDA_API_TOKEN = st.sidebar.text_input("API Access Token", type="password")
+OANDA_ACCOUNT_ID = st.sidebar.text_input("Account ID")
+ENVIRONMENT = st.sidebar.selectbox("Account Environment", ["practice", "live"])
+
+# Configure API base URL according to selected environment
+BASE_URL = "https://api-fxpractice.oanda.com" if ENVIRONMENT == "practice" else "https://api-fxtrade.oanda.com"
 
 HEADERS = {
     "Authorization": f"Bearer {OANDA_API_TOKEN}",
@@ -23,21 +25,36 @@ HEADERS = {
 }
 
 # ==========================================
-# 2. NATIVE OANDA DATA ENGINE
+# 2. INDICATOR CALCULATION ENGINE
 # ==========================================
-@st.cache_data(ttl=5, show_spinner=False)
-def fetch_oanda_candles(instrument="XAU_USD", granularity="M5", count=100):
-    """
-    Fetches real-time candlestick data directly from OANDA.
-    Granularities: S5, M1, M5, M15, H1, D, etc.
-    """
-    if not OANDA_API_TOKEN or not OANDA_ACCOUNT_ID:
-        return None, "Please provide valid OANDA API credentials in the sidebar."
-        
-    url = f"https://api-fxpractice.oanda.com/v20/instruments/{instrument}/candles"
-    if ENVIRONMENT == "live":
-        url = f"https://api-fxtrade.oanda.com/v20/instruments/{instrument}/candles"
+def apply_technical_indicators(df):
+    """Computes EMA and ATR metrics for strategy evaluation."""
+    if len(df) < 20:
+        return df
 
+    # Exponential Moving Averages
+    df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+    df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
+
+    # Average True Range (ATR 14)
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['ATR_14'] = tr.rolling(14).mean()
+
+    return df
+
+# ==========================================
+# 3. DIRECT OANDA DATA STREAM ENGINE
+# ==========================================
+@st.cache_data(ttl=3, show_spinner=False)
+def fetch_oanda_candles(instrument="XAU_USD", granularity="M5", count=100):
+    """Fetches real-time candlestick data directly from OANDA endpoints."""
+    if not OANDA_API_TOKEN or not OANDA_ACCOUNT_ID:
+        return None, "Please provide valid OANDA credentials in the sidebar."
+
+    url = f"{BASE_URL}/v3/instruments/{instrument}/candles"
     params = {
         "granularity": granularity,
         "count": count,
@@ -49,44 +66,41 @@ def fetch_oanda_candles(instrument="XAU_USD", granularity="M5", count=100):
         data = response.json()
 
         if response.status_code != 200:
-            return None, f"OANDA Error: {data.get('errorMessage', 'Failed to fetch data')}"
+            err = data.get("errorMessage", "Failed to communicate with OANDA API.")
+            return None, f"OANDA Error: {err}"
 
         candles = data.get("candles", [])
-        parsed_data = []
+        if not candles:
+            return None, "No candle data returned for this instrument."
 
+        parsed_data = []
         for c in candles:
-            if c["complete"]:
-                parsed_data.append({
-                    "Timestamp": pd.to_datetime(c["time"]),
-                    "Open": float(c["mid"]["o"]),
-                    "High": float(c["mid"]["h"]),
-                    "Low": float(c["mid"]["l"]),
-                    "Close": float(c["mid"]["c"]),
-                    "Volume": int(c["volume"])
-                })
+            parsed_data.append({
+                "Timestamp": pd.to_datetime(c["time"]),
+                "Open": float(c["mid"]["o"]),
+                "High": float(c["mid"]["h"]),
+                "Low": float(c["mid"]["l"]),
+                "Close": float(c["mid"]["c"]),
+                "Volume": int(c["volume"])
+            })
 
         df = pd.DataFrame(parsed_data)
-        if not df.empty:
-            df.set_index("Timestamp", inplace=True)
-            
+        df.set_index("Timestamp", inplace=True)
+        df = apply_technical_indicators(df)
         return df, None
 
     except Exception as e:
-        return None, str(e)
-
+        return None, f"Connection Exception: {str(e)}"
 
 # ==========================================
-# 3. NATIVE OANDA TRADE EXECUTION ENGINE
+# 4. DIRECT OANDA EXECUTION ENGINE
 # ==========================================
 def execute_oanda_order(instrument="XAU_USD", units=1, stop_loss=None, take_profit=None):
-    """
-    Executes a direct market order on OANDA.
-    units: Positive (+1) for BUY/LONG, Negative (-1) for SELL/SHORT.
-    """
+    """Submits direct market orders to OANDA without intermediate third parties."""
     if not OANDA_API_TOKEN or not OANDA_ACCOUNT_ID:
-        return False, "Missing API credentials."
+        return False, "Missing account credentials."
 
-    url = f"{BASE_URL}/orders"
+    url = f"{BASE_URL}/v3/accounts/{OANDA_ACCOUNT_ID}/orders"
 
     order_payload = {
         "order": {
@@ -98,7 +112,6 @@ def execute_oanda_order(instrument="XAU_USD", units=1, stop_loss=None, take_prof
         }
     }
 
-    # Optional Stop Loss / Take Profit configuration
     if stop_loss:
         order_payload["order"]["stopLossOnFill"] = {"price": f"{stop_loss:.2f}"}
     if take_profit:
@@ -110,59 +123,72 @@ def execute_oanda_order(instrument="XAU_USD", units=1, stop_loss=None, take_prof
 
         if response.status_code in [200, 201]:
             trans = res_data.get("orderFillTransaction") or res_data.get("orderCreateTransaction")
-            return True, f"Order Executed! Transaction ID: {trans.get('id')}"
+            return True, f"Order Filled! Transaction ID: {trans.get('id')}"
         else:
-            return False, f"Execution Failed: {res_data.get('errorMessage', response.text)}"
+            return False, f"Execution Refused: {res_data.get('errorMessage', response.text)}"
 
     except Exception as e:
-        return False, str(e)
-
+        return False, f"Order Failure: {str(e)}"
 
 # ==========================================
-# 4. STREAMLIT APP INTERFACE
+# 5. STREAMLIT UI & CONTROL DASHBOARD
 # ==========================================
-st.title("⚡ Direct OANDA Alpha Engine")
+st.title("⚡ Institutional Multi-TF Alpha Engine")
 
-# Controls
-col1, col2, col3 = st.columns(3)
-with col1:
-    symbol = st.selectbox("Instrument", ["XAU_USD", "EUR_USD", "GBP_USD"])
-with col2:
-    timeframe = st.selectbox("Timeframe", ["M1", "M5", "M15", "H1"], index=1)
-with col3:
-    trade_units = st.number_input("Units (Lots/Units)", value=1, step=1)
+# Parameter Control Row
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    symbol = st.selectbox("Asset Pair", ["XAU_USD", "EUR_USD", "GBP_USD", "USD_JPY"])
+with c2:
+    timeframe = st.selectbox("Timeframe", ["M1", "M5", "M15", "H1", "H4", "D"], index=1)
+with c3:
+    trade_units = st.number_input("Position Size (Units)", value=1, step=1)
+with c4:
+    st.write("")
+    st.write("")
+    refresh_btn = st.button("🔄 Refresh Market Data", use_container_width=True)
 
-# Fetch Data Button / Engine Trigger
-df, err = fetch_oanda_candles(instrument=symbol, granularity=timeframe, count=50)
+# Fetch Data
+df, err = fetch_oanda_candles(instrument=symbol, granularity=timeframe, count=100)
 
 if err:
     st.error(err)
 else:
-    # Display Price Banner
+    # Live Price Header Metrics
     latest_close = df["Close"].iloc[-1]
     prev_close = df["Close"].iloc[-2]
-    delta = round(latest_close - prev_close, 2)
-    st.metric(label=f"Live {symbol} Price", value=f"${latest_close:.2f}", delta=delta)
+    diff = round(latest_close - prev_close, 2)
+    latest_atr = df["ATR_14"].iloc[-1] if "ATR_14" in df.columns else 0.0
 
-    # Show Candlestick Data Table / Chart
-    st.subheader("Price Feed (OANDA)")
-    st.line_chart(df["Close"])
+    m1, m2, m3 = st.columns(3)
+    m1.metric(f"Live {symbol} Price", f"${latest_close:,.2f}", delta=f"{diff}")
+    m2.metric("ATR (14 Volatility)", f"{latest_atr:.2f}")
+    m3.metric("Feed Status", "OANDA v20 Live", delta_color="normal")
 
+    # Interactive Chart View
+    st.subheader(f"Market Structure ({symbol} - {timeframe})")
+    st.line_chart(df[["Close", "EMA_20", "EMA_50"]].dropna())
+
+    # Raw Data Table Toggle
+    with st.expander("📊 View Raw Candle & Indicator Data"):
+        st.dataframe(df.tail(20), use_container_width=True)
+
+    # Execution Operations
     st.markdown("---")
-    st.subheader("Manual & Automated Execution Panel")
+    st.subheader("Interactive Execution Desk")
     
     col_buy, col_sell = st.columns(2)
-    
+
     with col_buy:
-        if st.button(f"🚀 BUY {symbol}", use_container_width=True):
+        if st.button(f"🚀 BUY / LONG {symbol}", use_container_width=True, type="primary"):
             success, msg = execute_oanda_order(instrument=symbol, units=abs(trade_units))
             if success:
                 st.success(msg)
             else:
                 st.error(msg)
-                
+
     with col_sell:
-        if st.button(f"🔻 SELL {symbol}", use_container_width=True):
+        if st.button(f"🔻 SELL / SHORT {symbol}", use_container_width=True):
             success, msg = execute_oanda_order(instrument=symbol, units=-abs(trade_units))
             if success:
                 st.success(msg)
