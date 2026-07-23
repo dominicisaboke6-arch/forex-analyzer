@@ -9,7 +9,16 @@ import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 from twelvedata import TDClient
-from google import genai
+
+# ---------------------------------------------------------
+# DUAL SDK IMPORT HANDLER (PREVENTS IMPORTERROR CRASHES)
+# ---------------------------------------------------------
+try:
+    from google import genai
+    USING_NEW_SDK = True
+except ImportError:
+    import google.generativeai as genai
+    USING_NEW_SDK = False
 
 # ---------------------------------------------------------
 # 1. PAGE CONFIG & MINION STYLING
@@ -24,7 +33,7 @@ st.set_page_config(
 # Auto-refresh timer for live feed polling (every 10 seconds)
 st_autorefresh(interval=10000, key="minion_live_poll")
 
-# Hardcoded Twelve Data API Key & Timezone
+# API Keys & Timezone Configuration
 API_KEY = "a8c4eb7e1e424e479ea4c2f57b80fa65"
 eat_tz = pytz.timezone("Africa/Nairobi")
 
@@ -74,7 +83,7 @@ st.markdown("""
     .minion-logo { color: #f5c518; font-weight: 900; font-size: 22px; letter-spacing: 2px; }
     .minion-sub { color: #6b778d; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
 
-    /* Clean 3-Column Signal Card Layout */
+    /* Clean Signal Card Layout */
     .aurum-sig-card {
         background-color: #121722;
         border: 1px solid #1f2838;
@@ -105,7 +114,6 @@ st.markdown("""
         box-shadow: 0 0 15px rgba(255, 0, 85, 0.4);
     }
     
-    /* Hide Streamlit default chrome */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -233,7 +241,7 @@ if err or raw_df is None:
     st.error(f"⚠️ Feed Sync Error: {err}")
     st.stop()
 
-# Technical Indicators
+# Technical Indicators Calculation
 raw_df["EMA_8"] = raw_df["Close"].ewm(span=8, adjust=False).mean()
 raw_df["EMA_21"] = raw_df["Close"].ewm(span=21, adjust=False).mean()
 raw_df["EMA_50"] = raw_df["Close"].ewm(span=50, adjust=False).mean()
@@ -293,36 +301,37 @@ st.session_state.executed_signals = st.session_state.executed_signals[:5]
 # 8. GEMINI AI ENGINE HELPER
 # ---------------------------------------------------------
 def get_gemini_market_analysis(user_prompt, live_context):
-    # Dynamically fetch API key from Streamlit secrets or OS Environment
     api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
     
     if not api_key:
-        return "⚠️ **Gemini Key Missing**: Set `GEMINI_API_KEY` in environment variables or `.streamlit/secrets.toml`."
+        return "⚠️ **Gemini Key Missing**: Set `GEMINI_API_KEY` in Streamlit Cloud Secrets or `.streamlit/secrets.toml`."
+    
+    system_instruction = f"""
+    You are MINION Alpha AI, an institutional quantitative trader and market analyst specialized in Gold (XAU/USD) and FX.
+    
+    LIVE MARKET CONTEXT:
+    - Asset: {live_context.get('symbol')}
+    - Horizon: {live_context.get('horizon')}
+    - Current Price: ${live_context.get('price'):.2f}
+    - RSI (14): {live_context.get('rsi'):.2f}
+    - MACD Histogram: {live_context.get('macd_h'):.4f}
+    - Recent Executed Signals: {live_context.get('signals')}
+    """
     
     try:
-        client = genai.Client(api_key=api_key)
-        
-        system_instruction = f"""
-        You are MINION Alpha AI, an institutional quantitative trader and market analyst specialized in Gold (XAU/USD) and FX.
-        Be sharp, concise, professional, and clear.
-        
-        LIVE MARKET TERMINAL CONTEXT:
-        - Asset Symbol: {live_context.get('symbol')}
-        - Timeframe Horizon: {live_context.get('horizon')}
-        - Current Live Price: ${live_context.get('price'):.2f}
-        - Current RSI (14): {live_context.get('rsi'):.2f}
-        - Current MACD Histogram: {live_context.get('macd_h'):.4f}
-        - Active Executed Signals: {live_context.get('signals')}
-        
-        Use this live numerical data to answer queries accurately.
-        """
-        
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=user_prompt,
-            config={'system_instruction': system_instruction}
-        )
-        return response.text
+        if USING_NEW_SDK:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=user_prompt,
+                config={'system_instruction': system_instruction}
+            )
+            return response.text
+        else:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction)
+            response = model.generate_content(user_prompt)
+            return response.text
     except Exception as e:
         return f"❌ Gemini Engine Error: {str(e)}"
 
@@ -357,7 +366,7 @@ with col_left:
     components.html(tv_html, height=545)
     st.markdown('<div class="scanning-footer">• SCANNING LIVE •</div>', unsafe_allow_html=True)
 
-# --- RIGHT COLUMN: SIGNALS, DYNAMIC NEWS & REAL GEMINI CHAT ---
+# --- RIGHT COLUMN: SIGNALS, NEWS & AI CHAT ---
 with col_right:
     # 1. LIVE SIGNALS PANEL
     st.markdown("<h4 style='color:#f5c518; margin-bottom:8px; font-size:14px;'>⚡ LIVE EXECUTED SIGNALS</h4>", unsafe_allow_html=True)
@@ -374,7 +383,7 @@ with col_right:
 
     st.divider()
 
-    # 2. BREAKING NEWS & SENTIMENT PANEL
+    # 2. BREAKING NEWS PANEL
     st.markdown("<h4 style='color:#f5c518; margin-bottom:8px; font-size:14px;'>📰 BREAKING NEWS & SENTIMENT</h4>", unsafe_allow_html=True)
     
     if live_news:
@@ -399,7 +408,7 @@ with col_right:
 
     st.divider()
 
-    # 3. REAL GEMINI 2.5 AI ASSISTANT CHAT
+    # 3. AI ASSISTANT CHAT
     st.markdown("<h4 style='color:#f5c518; margin-bottom:4px; font-size:14px;'>🤖 MINION AI ASSISTANT</h4>", unsafe_allow_html=True)
 
     chat_container = st.container(height=190)
