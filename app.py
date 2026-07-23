@@ -5,9 +5,9 @@ import numpy as np
 from datetime import datetime
 import pytz
 from streamlit_autorefresh import st_autorefresh
-import yfinance as yf
+from twelvedata import TDClient
 
-# Optional ML & GenAI Guards
+# Optional ML Library Guard
 try:
     import xgboost as xgb
     XGB_AVAILABLE = True
@@ -18,14 +18,14 @@ except ImportError:
 # 1. PAGE CONFIGURATION & INITIALIZATION
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="MINION Multi-TF Alpha Engine",
+    page_title="MINION Institutional Multi-TF Alpha Engine",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # Auto-refresh timer for live polling (every 15 seconds)
-st_autorefresh(interval=15000, key="minion_refresh")
+st_autorefresh(interval=15000, key="minion_institutional_refresh")
 
 st.markdown("""
 <style>
@@ -75,8 +75,8 @@ if "last_signal_id" not in st.session_state:
 # ---------------------------------------------------------
 st.markdown("""
 <div class="minion-header">
-    <div class="minion-title">⚡ MINION  SCALP & HOLD ENGINE ⚡</div>
-    <div class="minion-subtitle">Multi-Indicator Confluence • Scalp & Hold Horizon • Free Data Feed • AI Breakdown</div>
+    <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
+    <div class="minion-subtitle">Multi-Indicator Confluence • Scalp & Hold Horizon • Real-Time Twelve Data Feed • AI Breakdown</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -98,8 +98,11 @@ updateClock();
 components.html(clock_html, height=45)
 
 # ---------------------------------------------------------
-# 3. SIDEBAR CONTROLS (HORIZON & STRATEGY SELECTION)
+# 3. SIDEBAR CONTROLS & API CONFIGURATION
 # ---------------------------------------------------------
+st.sidebar.header("🔑 Institutional Feed")
+api_key = st.sidebar.text_input("Twelve Data API Key", type="password")
+
 st.sidebar.header("🎯 Strategy & Horizon Setup")
 execution_mode = st.sidebar.selectbox(
     "Select Operating Horizon",
@@ -117,48 +120,60 @@ selected_asset = st.sidebar.selectbox(
     ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD"]
 )
 
+# Twelve Data symbols mapped to TradingView widgets
 asset_map = {
-    "Gold (Spot XAU/USD)": {"yf": "GC=F", "tv": "OANDA:XAUUSD", "dec": 2},
-    "EUR/USD": {"yf": "EURUSD=X", "tv": "FX:EURUSD", "dec": 4},
-    "GBP/USD": {"yf": "GBPUSD=X", "tv": "FX:GBPUSD", "dec": 4}
+    "Gold (Spot XAU/USD)": {"td": "XAU/USD", "tv": "OANDA:XAUUSD", "dec": 2},
+    "EUR/USD": {"td": "EUR/USD", "tv": "FX:EURUSD", "dec": 4},
+    "GBP/USD": {"td": "GBP/USD", "tv": "FX:GBPUSD", "dec": 4}
 }
 curr_info = asset_map[selected_asset]
 
 if "1-Minute" in execution_mode:
-    interval, yf_interval, atr_mult_tp = "1m", "1m", 1.5
+    interval, td_interval, atr_mult_tp = "1m", "1min", 1.5
 elif "5-Minute" in execution_mode:
-    interval, yf_interval, atr_mult_tp = "5m", "5m", 1.8
+    interval, td_interval, atr_mult_tp = "5m", "5min", 1.8
 elif "15-Minute" in execution_mode:
-    interval, yf_interval, atr_mult_tp = "15m", "15m", 2.2
+    interval, td_interval, atr_mult_tp = "15m", "15min", 2.2
 elif "1-Hour" in execution_mode:
-    interval, yf_interval, atr_mult_tp = "1h", "1h", 3.0
+    interval, td_interval, atr_mult_tp = "1h", "1h", 3.0
 else:
-    interval, yf_interval, atr_mult_tp = "4h", "1h", 4.5
+    interval, td_interval, atr_mult_tp = "4h", "4h", 4.5
 
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
 
+if not api_key:
+    st.warning("👈 Please enter your Twelve Data API key in the sidebar to sync real-time market pricing.")
+    st.stop()
+
 # ---------------------------------------------------------
-# 4. FREE LIVE DATA ENGINE (yfinance)
+# 4. REAL-TIME DATA ENGINE (Twelve Data)
 # ---------------------------------------------------------
 @st.cache_data(ttl=15, show_spinner=False)
-def fetch_free_live_data(ticker, period_interval):
+def fetch_twelve_data_feed(symbol_string, interval_string, key):
     try:
-        period_val = "5d" if period_interval in ["1m", "5m", "15m"] else "60d"
-        df = yf.download(ticker, period=period_val, interval=period_interval, progress=False)
+        td = TDClient(apikey=key)
+        ts = td.time_series(
+            symbol=symbol_string,
+            interval=interval_string,
+            outputsize=120,
+            timezone="Africa/Nairobi"
+        )
+        df = ts.as_pandas()
         if df.empty:
-            return None, "No data returned from Yahoo Finance."
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
-        df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+            return None, "No data returned from Twelve Data API."
+            
+        df = df[["open", "high", "low", "close", "volume"]].astype(float)
+        df.columns = ["Open", "High", "Low", "Close", "Volume"]
+        df = df.sort_index()
         return df, None
     except Exception as e:
-        return None, f"Data Fetch Error: {e}"
+        return None, f"Twelve Data Connection Error: {e}"
 
-with st.spinner("Syncing comprehensive data feeds..."):
-    raw_df, fetch_error = fetch_free_live_data(curr_info["yf"], yf_interval)
+with st.spinner("Syncing real-time institutional feeds..."):
+    raw_df, fetch_error = fetch_twelve_data_feed(curr_info["td"], td_interval, api_key)
 
 if fetch_error:
-    st.error(f"⚠️ Live Feed Error: {fetch_error}")
+    st.error(f"⚠️ Feed Error: {fetch_error}")
     st.stop()
 
 # ---------------------------------------------------------
@@ -177,7 +192,6 @@ def process_all_indicators(df):
     df["EMA_8"] = df["Close"].ewm(span=8, adjust=False).mean()
     df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
     df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
-    df["SMA_200"] = df["Close"].rolling(window=200).mean()
     
     delta = df["Close"].diff()
     gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
@@ -210,7 +224,7 @@ if not active_df.empty:
     rsi = float(latest["RSI"])
     macd_hist = float(latest["MACD_Hist"])
 
-    def evaluate_confluence(row, df_sub):
+    def evaluate_confluence(row):
         b_score, s_score = 50, 50
         reasons_buy = []
         reasons_sell = []
@@ -224,28 +238,28 @@ if not active_df.empty:
 
         if row["MACD_Hist"] > 0:
             b_score += 15
-            reasons_buy.append("MACD momentum is positive")
+            reasons_buy.append("MACD momentum histogram is positive")
         else:
             s_score += 15
-            reasons_sell.append("MACD momentum is negative")
+            reasons_sell.append("MACD momentum histogram is negative")
 
         if 50 < row["RSI"] < 75:
             b_score += 10
-            reasons_buy.append(f"RSI bullish zone ({row['RSI']:.1f})")
+            reasons_buy.append(f"RSI indicator in bullish zone ({row['RSI']:.1f})")
         elif 25 < row["RSI"] < 50:
             s_score += 10
-            reasons_sell.append(f"RSI bearish zone ({row['RSI']:.1f})")
+            reasons_sell.append(f"RSI indicator in bearish zone ({row['RSI']:.1f})")
 
         if row["Close"] <= row["BB_Lower"]:
             b_score += 10
-            reasons_buy.append("Price testing lower Bollinger Band (Mean Reversion / Bounce)")
+            reasons_buy.append("Price testing lower Bollinger Band boundary (Bounce setup)")
         elif row["Close"] >= row["BB_Upper"]:
             s_score += 10
-            reasons_sell.append("Price testing upper Bollinger Band (Overextended)")
+            reasons_sell.append("Price testing upper Bollinger Band boundary (Fade setup)")
 
         return b_score, s_score, reasons_buy, reasons_sell
 
-    buy_score, s_score, buy_reasons, sell_reasons = evaluate_confluence(latest, active_df)
+    buy_score, s_score, buy_reasons, sell_reasons = evaluate_confluence(latest)
 
     ml_win_prob = 0.55
     if XGB_AVAILABLE and len(active_df) > 30:
@@ -308,27 +322,27 @@ if not active_df.empty:
                 elif price >= item["sl"]: item["status"] = "LOSS (SL) ❌"
 
     # ---------------------------------------------------------
-    # 6. DASHBOARD DISPLAY & AI EXPLANATION LAYER
+    # 6. DASHBOARD METRICS & AI EXPLANATION LAYER
     # ---------------------------------------------------------
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Live Price", f"${price:.{curr_info['dec']}f}")
+    col1.metric("Live Price Feed", f"${price:.{curr_info['dec']}f}")
     col2.metric("Horizon Mode", execution_mode.split("(")[1].replace(")", ""))
     col3.metric("Signal Output", signal)
     col4.metric("Confluence Score", f"B:{buy_score} | S:{s_score}")
     col5.metric("AI Confidence Edge", f"{ml_win_prob*100:.1f}%")
 
     st.markdown("### 🤖 AI Market Analyst Explanation")
-    reason_bullet_str = "".join([f"<li>{r}</li>" for r in active_reasons]) if active_reasons else "<li>Market conditions are currently mixed; awaiting clearer confirmation across indicators.</li>"
+    reason_bullet_str = "".join([f"<li>{r}</li>" for r in active_reasons]) if active_reasons else "<li>Market conditions are currently mixed; awaiting clearer multi-indicator confluence.</li>"
     
     ai_explanation_html = f"""
     <div class="ai-box">
-        <b>Current Analysis Breakdown ({selected_asset} @ {interval}):</b><br>
-        The engine scanned price action using multi-indicator confluence (EMA ribbons, RSI momentum, MACD histogram, and Bollinger Band boundaries).<br><br>
-        <b>Detected Factors:</b>
+        <b>Real-Time Analysis Breakdown ({selected_asset} @ {interval}):</b><br>
+        The engine evaluated current price action against multi-indicator technical confluence (EMA ribbon hierarchy, RSI momentum oscillators, MACD histogram, and Bollinger Band boundaries).<br><br>
+        <b>Detected Technical Factors:</b>
         <ul>
             {reason_bullet_str}
         </ul>
-        <b>Execution Outlook:</b> Current sentiment score yields a <b>{max(buy_score, s_score)}/100</b> rating with an estimated model win probability of <b>{ml_win_prob*100:.1f}%</b> under a {execution_mode}.
+        <b>Execution Outlook:</b> Composite scoring yields a rating of <b>{max(buy_score, s_score)}/100</b> with an estimated win probability of <b>{ml_win_prob*100:.1f}%</b> under the selected {execution_mode}.
     </div>
     """
     st.markdown(ai_explanation_html, unsafe_allow_html=True)
@@ -378,4 +392,4 @@ if not active_df.empty:
         else:
             st.caption("Awaiting signals.")
 else:
-    st.error("⚠️ Unable to process indicator data.")
+    st.error("⚠️ Unable to process real-time indicator feeds.")
