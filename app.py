@@ -293,6 +293,7 @@ st.session_state.executed_signals = st.session_state.executed_signals[:5]
 # 8. GEMINI AI ENGINE HELPER
 # ---------------------------------------------------------
 def get_gemini_market_analysis(user_prompt, live_context):
+    # Dynamically fetch API key from Streamlit secrets or OS Environment
     api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
     
     if not api_key:
