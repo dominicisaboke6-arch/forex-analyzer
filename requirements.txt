@@ -1,1 +1,8 @@
-pip install streamlit streamlit-components-v1 pandas numpy pytz streamlit-autorefresh twelvedata google-genai
+pip install streamlit 
+streamlit-components-v1 
+pandas 
+numpy 
+pytz 
+streamlit-autorefresh 
+twelvedata 
+google-genai
