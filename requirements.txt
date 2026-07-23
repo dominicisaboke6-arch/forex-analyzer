@@ -1,8 +1,1 @@
-streamlit
-streamlit-autorefresh
-pandas
-numpy
-pytz
-twelvedata
-xgboost
-yfinance
+pip install streamlit streamlit-components-v1 pandas numpy pytz streamlit-autorefresh twelvedata google-genai
