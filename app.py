@@ -98,10 +98,13 @@ updateClock();
 components.html(clock_html, height=45)
 
 # ---------------------------------------------------------
-# 3. SIDEBAR CONTROLS & API CONFIGURATION
+# 3. SECRETS CONFIGURATION & STRATEGY SETUP
 # ---------------------------------------------------------
-st.sidebar.header("🔑 Institutional Feed")
-api_key = st.sidebar.text_input("Twelve Data API Key", type="password")
+try:
+    api_key = st.secrets["TWELVE_DATA_API_KEY"]
+except Exception:
+    st.error("⚠️ Twelve Data API Key missing! Please configure it in your Streamlit Secrets (`secrets.toml`).")
+    st.stop()
 
 st.sidebar.header("🎯 Strategy & Horizon Setup")
 execution_mode = st.sidebar.selectbox(
@@ -139,10 +142,6 @@ else:
     interval, td_interval, atr_mult_tp = "4h", "4h", 4.5
 
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
-
-if not api_key:
-    st.warning("👈 Please enter your Twelve Data API key in the sidebar to sync real-time market pricing.")
-    st.stop()
 
 # ---------------------------------------------------------
 # 4. REAL-TIME DATA ENGINE (Twelve Data with Volume Safety)
@@ -399,5 +398,45 @@ if not active_df.empty:
             st.dataframe(j_df, use_container_width=True)
         else:
             st.caption("Awaiting signals.")
+
+    # ---------------------------------------------------------
+    # 7. INTERACTIVE AI ASSISTANT CHAT
+    # ---------------------------------------------------------
+    st.divider()
+    st.subheader("💬 Ask MINION AI Assistant")
+
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = [
+            {"role": "assistant", "content": f"Hello! I am your {selected_asset} market assistant. Ask me anything about current indicators, risk parameters, or trade setups."}
+        ]
+
+    for message in st.session_state.chat_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if user_query := st.chat_input("Ask about current signals, RSI levels, or trade rules..."):
+        st.session_state.chat_messages.append({"role": "user", "content": user_query})
+        with st.chat_message("user"):
+            st.markdown(user_query)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Analyzing market parameters..."):
+                query_lower = user_query.lower()
+                
+                if "price" in query_lower:
+                    reply = f"The current live price for {selected_asset} on the {interval} timeframe is **${price:.{curr_info['dec']}f}**."
+                elif "score" in query_lower or "confluence" in query_lower:
+                    reply = f"Current confluence scores are **Buy: {buy_score}/100** and **Sell: {s_score}/100** (Threshold required: {min_score_threshold})."
+                elif "rsi" in query_lower:
+                    reply = f"The current RSI (14) value is **{rsi:.1f}**."
+                elif "signal" in query_lower:
+                    reply = f"The current active signal output is: **{signal}**."
+                elif "sl" in query_lower or "stop" in query_lower or "tp" in query_lower:
+                    reply = f"Current risk parameters — Stop Loss (SL): **${sl:.{curr_info['dec']}f}** | Take Profit 1 (TP1): **${tp1:.{curr_info['dec']}f}**."
+                else:
+                    reply = f"Based on the active {execution_mode}, the market is currently reading a composite score of Buy: {buy_score} and Sell: {s_score}. Ask me specific questions about **price**, **RSI**, **scores**, **signals**, or **stop loss**!"
+                
+                st.markdown(reply)
+                st.session_state.chat_messages.append({"role": "assistant", "content": reply})
 else:
     st.error("⚠️ Unable to process real-time indicator feeds.")
