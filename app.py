@@ -366,7 +366,6 @@ with col_right:
             badge_cls = "sig-buy-badge" if sig["type"] == "BUY" else "sig-sell-badge"
             latest_html = '<span class="sig-latest-pill">LATEST</span>' if idx == 0 else ""
             
-            # Single-line HTML string guarantees no raw markdown leak
             card_html = f'<div class="aurum-sig-card"><span class="{badge_cls}">{sig["type"]}</span><span class="sig-price-center">{sig["price"]} {latest_html}</span><span class="sig-time-right">{sig["time"]}</span></div>'
             st.markdown(card_html, unsafe_allow_html=True)
     else:
