@@ -11,7 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 from twelvedata import TDClient
 
 # ---------------------------------------------------------
-# DUAL SDK IMPORT HANDLER (PREVENTS IMPORTERROR CRASHES)
+# DUAL SDK IMPORT HANDLER
 # ---------------------------------------------------------
 try:
     from google import genai
@@ -21,7 +21,7 @@ except ImportError:
     USING_NEW_SDK = False
 
 # ---------------------------------------------------------
-# 1. PAGE CONFIG & MINION STYLING
+# 1. PAGE CONFIG & STYLING
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="MINION | Live Gold & Multi-Asset Market Scanner",
@@ -30,19 +30,15 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Auto-refresh timer for live feed polling (every 10 seconds)
 st_autorefresh(interval=10000, key="minion_live_poll")
 
-# API Keys & Timezone Configuration
 API_KEY = "a8c4eb7e1e424e479ea4c2f57b80fa65"
 eat_tz = pytz.timezone("Africa/Nairobi")
 
 st.markdown("""
 <style>
-    /* Dark MINION Theme Styling */
     .stApp { background-color: #0b0e14; color: #d0d7de; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     
-    /* Dynamic Ticker Styling */
     @keyframes marquee {
         0% { transform: translateX(100%); }
         100% { transform: translateX(-100%); }
@@ -64,12 +60,8 @@ st.markdown("""
         font-size: 12px;
         color: #e6edf3;
     }
-    .ticker-content:hover {
-        animation-play-state: paused;
-        cursor: pointer;
-    }
+    .ticker-content:hover { animation-play-state: paused; cursor: pointer; }
     
-    /* MINION Header Banner */
     .minion-header {
         display: flex;
         justify-content: space-between;
@@ -83,7 +75,6 @@ st.markdown("""
     .minion-logo { color: #f5c518; font-weight: 900; font-size: 22px; letter-spacing: 2px; }
     .minion-sub { color: #6b778d; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
 
-    /* Clean Signal Card Layout */
     .aurum-sig-card {
         background-color: #121722;
         border: 1px solid #1f2838;
@@ -100,7 +91,6 @@ st.markdown("""
     .sig-latest-pill { background-color: #f5c518; color: #000; font-weight: 800; font-size: 9px; padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
     .sig-time-right { color: #6b778d; font-size: 11px; font-family: monospace; }
 
-    /* Scanning Live Bottom Footer */
     .scanning-footer {
         background: linear-gradient(90deg, #ff0055 0%, #ff2e63 100%);
         color: #ffffff;
@@ -174,7 +164,7 @@ if "chat_history" not in st.session_state:
     ]
 
 # ---------------------------------------------------------
-# 4. TOP BANNER & DYNAMIC MARQUEE TICKER
+# 4. TOP BANNER & TICKER
 # ---------------------------------------------------------
 st.markdown("""
 <div class="minion-header">
@@ -241,7 +231,7 @@ if err or raw_df is None:
     st.error(f"⚠️ Feed Sync Error: {err}")
     st.stop()
 
-# Technical Indicators Calculation
+# Technical Indicators
 raw_df["EMA_8"] = raw_df["Close"].ewm(span=8, adjust=False).mean()
 raw_df["EMA_21"] = raw_df["Close"].ewm(span=21, adjust=False).mean()
 raw_df["EMA_50"] = raw_df["Close"].ewm(span=50, adjust=False).mean()
@@ -275,7 +265,7 @@ if 50 < rsi < 75: buy_score += 15
 elif 25 < rsi < 50: sell_score += 15
 
 # ---------------------------------------------------------
-# 7. STRICT 1 SIGNAL EXECUTION PER CANDLE
+# 7. SIGNAL EXECUTION
 # ---------------------------------------------------------
 if st.session_state.last_executed_candle != latest_candle_time:
     if buy_score >= min_threshold and buy_score >= sell_score:
@@ -298,13 +288,13 @@ if st.session_state.last_executed_candle != latest_candle_time:
 st.session_state.executed_signals = st.session_state.executed_signals[:5]
 
 # ---------------------------------------------------------
-# 8. GEMINI AI ENGINE HELPER
+# 8. GEMINI AI ENGINE HELPER (WITH MODEL FALLBACKS)
 # ---------------------------------------------------------
 def get_gemini_market_analysis(user_prompt, live_context):
     api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
     
     if not api_key:
-        return "⚠️ **Gemini Key Missing**: Set `GEMINI_API_KEY` in Streamlit Cloud Secrets or `.streamlit/secrets.toml`."
+        return "⚠️ **Gemini Key Missing**: Set `GEMINI_API_KEY` in Streamlit Secrets or `.streamlit/secrets.toml`."
     
     system_instruction = f"""
     You are MINION Alpha AI, an institutional quantitative trader and market analyst specialized in Gold (XAU/USD) and FX.
@@ -315,25 +305,33 @@ def get_gemini_market_analysis(user_prompt, live_context):
     - Current Price: ${live_context.get('price'):.2f}
     - RSI (14): {live_context.get('rsi'):.2f}
     - MACD Histogram: {live_context.get('macd_h'):.4f}
-    - Recent Executed Signals: {live_context.get('signals')}
+    - Recent Signals: {live_context.get('signals')}
     """
     
-    try:
-        if USING_NEW_SDK:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=user_prompt,
-                config={'system_instruction': system_instruction}
-            )
-            return response.text
-        else:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=system_instruction)
-            response = model.generate_content(user_prompt)
-            return response.text
-    except Exception as e:
-        return f"❌ Gemini Engine Error: {str(e)}"
+    # Models to attempt in order of priority to prevent 404 errors
+    model_candidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
+    
+    last_error = None
+    for model_name in model_candidates:
+        try:
+            if USING_NEW_SDK:
+                client = genai.Client(api_key=api_key)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=user_prompt,
+                    config={'system_instruction': system_instruction}
+                )
+                return response.text
+            else:
+                genai.configure(api_key=api_key)
+                model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
+                response = model.generate_content(user_prompt)
+                return response.text
+        except Exception as e:
+            last_error = e
+            continue  # Fall back to the next model if 404 occurs
+
+    return f"❌ Gemini Engine Error: {str(last_error)}"
 
 # ---------------------------------------------------------
 # 9. MINION DASHBOARD GRID
