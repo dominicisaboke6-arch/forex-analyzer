@@ -59,33 +59,22 @@ st.markdown("""
     .minion-logo { color: #f5c518; font-weight: 900; font-size: 22px; letter-spacing: 2px; }
     .minion-sub { color: #6b778d; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
 
-    /* Signal Card Style */
-    .signal-card-buy {
-        background: #0f221c;
-        border: 1px solid #00ffaa;
-        border-left: 5px solid #00ffaa;
-        padding: 10px 14px;
+    /* Clean 3-Column Signal Card Styling */
+    .aurum-sig-card {
+        background-color: #121722;
+        border: 1px solid #1f2838;
         border-radius: 6px;
+        padding: 10px 14px;
         margin-bottom: 8px;
         display: flex;
-        justify-content: space-between;
         align-items: center;
-    }
-    .signal-card-sell {
-        background: #281318;
-        border: 1px solid #ff4d4d;
-        border-left: 5px solid #ff4d4d;
-        padding: 10px 14px;
-        border-radius: 6px;
-        margin-bottom: 8px;
-        display: flex;
         justify-content: space-between;
-        align-items: center;
     }
-    .sig-badge-buy { background-color: #00ffaa; color: #000; font-weight: 800; padding: 2px 8px; border-radius: 3px; font-size: 11px; }
-    .sig-badge-sell { background-color: #ff4d4d; color: #fff; font-weight: 800; padding: 2px 8px; border-radius: 3px; font-size: 11px; }
-    .sig-price { font-family: monospace; font-size: 15px; font-weight: bold; color: #ffffff; }
-    .sig-time { color: #8892b0; font-size: 11px; font-family: monospace; }
+    .sig-buy-badge { background-color: #00ffaa; color: #000; font-weight: 800; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+    .sig-sell-badge { background-color: #ff4d4d; color: #fff; font-weight: 800; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+    .sig-price-center { color: #f5c518; font-family: monospace; font-size: 15px; font-weight: bold; }
+    .sig-latest-pill { background-color: #f5c518; color: #000; font-weight: 800; font-size: 9px; padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
+    .sig-time-right { color: #6b778d; font-size: 11px; font-family: monospace; }
 
     /* Scanning Live Bottom Footer */
     .scanning-footer {
@@ -241,7 +230,7 @@ if st.session_state.last_executed_candle != latest_candle_time:
 st.session_state.executed_signals = st.session_state.executed_signals[:5]
 
 # ---------------------------------------------------------
-# 7. MINION DASHBOARD GRID (CHART LEFT, SIGNALS & CHAT RIGHT)
+# 7. MINION DASHBOARD GRID
 # ---------------------------------------------------------
 col_left, col_right = st.columns([2.6, 1.2])
 
@@ -274,25 +263,15 @@ with col_left:
 
 # --- RIGHT COLUMN: SIGNALS, NEWS & OMNI-MARKET AI CHAT ---
 with col_right:
-    # 1. LIVE SIGNALS PANEL
+    # 1. LIVE SIGNALS PANEL (Cleaned HTML String to Prevent Tag Leaking)
     st.markdown("<h4 style='color:#f5c518; margin-bottom:8px; font-size:14px;'>⚡ LIVE EXECUTED SIGNALS</h4>", unsafe_allow_html=True)
     
     if st.session_state.executed_signals:
         for idx, sig in enumerate(st.session_state.executed_signals):
-            badge_class = "sig-badge-buy" if sig["type"] == "BUY" else "sig-badge-sell"
-            card_class = "signal-card-buy" if sig["type"] == "BUY" else "signal-card-sell"
-            latest_tag = " <span style='color:#f5c518; font-size:9px; font-weight:bold;'>[LATEST]</span>" if idx == 0 else ""
+            badge_cls = "sig-buy-badge" if sig["type"] == "BUY" else "sig-sell-badge"
+            latest_html = '<span class="sig-latest-pill">LATEST</span>' if idx == 0 else ""
             
-            card_html = f"""
-            <div class="{card_class}">
-                <div>
-                    <span class="{badge_class}">{sig['type']}</span>
-                    {latest_tag}
-                </div>
-                <div class="sig-price">{sig['price']}</div>
-                <div class="sig-time">{sig['time']}</div>
-            </div>
-            """
+            card_html = f'<div class="aurum-sig-card"><span class="{badge_cls}">{sig["type"]}</span><span class="sig-price-center">{sig["price"]} {latest_html}</span><span class="sig-time-right">{sig["time"]}</span></div>'
             st.markdown(card_html, unsafe_allow_html=True)
     else:
         st.info("Scanning candle close for threshold confluence setup...")
@@ -302,13 +281,28 @@ with col_right:
     # 2. BREAKING NEWS & SENTIMENT PANEL
     st.markdown("<h4 style='color:#f5c518; margin-bottom:8px; font-size:14px;'>📰 BREAKING NEWS & SENTIMENT</h4>", unsafe_allow_html=True)
     st.markdown("""
-    <div style="background-color:#121722; padding:8px 12px; border-radius:5px; margin-bottom:6px; font-size:12px;">
-        <span style="color:#00ffaa; font-weight:bold;">▲ BULLISH</span> <span style="color:#777;">Reuters</span><br>
-        <span style="color:#eee;">Gold Rises on Weakening US Dollar & Treasury Yields</span>
+    <div style="background-color:#121722; border:1px solid #1f2838; padding:10px 12px; border-radius:6px; margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <span style="color:#00ffaa; font-weight:bold; font-size:11px;">▲ BULLISH</span> 
+                <span style="color:#6b778d; font-size:11px; margin-left:4px;">Reuters</span>
+            </div>
+            <span style="color:#6b778d; font-size:10px; font-family:monospace;">just now</span>
+        </div>
+        <div style="color:#ffffff; font-weight:bold; font-size:12px; margin-top:4px;">Gold Rises on Weakening US Dollar & Treasury Yields</div>
+        <div style="color:#8892b0; font-size:11px; margin-top:2px;">Gold prices increased as the US dollar weakened against major currencies.</div>
     </div>
-    <div style="background-color:#121722; padding:8px 12px; border-radius:5px; margin-bottom:12px; font-size:12px;">
-        <span style="color:#ffaa00; font-weight:bold;">◆ NEUTRAL</span> <span style="color:#777;">Bloomberg</span><br>
-        <span style="color:#eee;">Fed Holds Interest Rates Steady Pending Macro CPI Data</span>
+    
+    <div style="background-color:#121722; border:1px solid #1f2838; padding:10px 12px; border-radius:6px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <span style="color:#ffaa00; font-weight:bold; font-size:11px;">◆ NEUTRAL</span> 
+                <span style="color:#6b778d; font-size:11px; margin-left:4px;">Bloomberg</span>
+            </div>
+            <span style="color:#6b778d; font-size:10px; font-family:monospace;">just now</span>
+        </div>
+        <div style="color:#ffffff; font-weight:bold; font-size:12px; margin-top:4px;">Fed Holds Interest Rates Steady Pending Macro CPI Data</div>
+        <div style="color:#8892b0; font-size:11px; margin-top:2px;">The Federal Reserve's decision to keep interest rates steady had little direct impact on gold prices.</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -317,10 +311,10 @@ with col_right:
 
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [
-            {"role": "assistant", "content": "I'm MINION, scanning live market feeds. Ask me anything about signals, technicals, Federal Reserve policy, or trading strategies."}
+            {"role": "assistant", "content": "I'm scanning the gold market live. I'll flag anything worth acting on - or just ask me what's happening right now."}
         ]
 
-    chat_container = st.container(height=200)
+    chat_container = st.container(height=180)
     with chat_container:
         for msg in st.session_state.chat_history:
             with st.chat_message(msg["role"]):
@@ -342,11 +336,11 @@ with col_right:
         elif "rsi" in q_lower:
             ans = f"The current 14-period RSI indicator is reading **{rsi:.1f}**."
         elif "fed" in q_lower or "rate" in q_lower or "news" in q_lower or "dollar" in q_lower:
-            ans = "Central bank policy directly impacts Gold ($XAU/USD). Rate pause or cuts typically weaken the US Dollar, creating bullish momentum for non-yielding assets like Gold."
+            ans = "Central bank policy directly impacts Gold ($XAU/USD). Rate pauses or cuts typically weaken the US Dollar, creating bullish momentum for non-yielding assets like Gold."
         elif "strategy" in q_lower or "how" in q_lower:
             ans = f"MINION evaluates EMA ribbon crossovers (8/21/50), MACD histogram momentum, and RSI boundaries. A signal executes strictly once per candle when confluence reaches {min_threshold}/100."
         else:
-            ans = f"Regarding your question about structural market dynamics: Gold is currently trading at **${price:.{curr_info['dec']}f}** with RSI at **{rsi:.1f}**. Ensure strict risk-to-reward parameters when acting on signals!"
+            ans = f"Regarding your question: Gold is currently trading at **${price:.{curr_info['dec']}f}** with RSI at **{rsi:.1f}**. Ensure strict risk-to-reward parameters when acting on signals!"
 
         st.session_state.chat_history.append({"role": "assistant", "content": ans})
         st.rerun()
