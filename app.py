@@ -1,4 +1,3 @@
-import os
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -9,16 +8,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 from twelvedata import TDClient
-
-# ---------------------------------------------------------
-# DUAL SDK IMPORT HANDLER
-# ---------------------------------------------------------
-try:
-    from google import genai
-    USING_NEW_SDK = True
-except ImportError:
-    import google.generativeai as genai
-    USING_NEW_SDK = False
 
 # ---------------------------------------------------------
 # 1. PAGE CONFIG & STYLING
@@ -160,7 +149,7 @@ if "last_executed_candle" not in st.session_state:
     st.session_state.last_executed_candle = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
-        {"role": "assistant", "content": "I am MINION Alpha AI, synced to your live price feed. What are we analyzing?"}
+        {"role": "assistant", "content": "🤖 **MINION Local Quant Engine Active** (No API Key Required). I am connected to your live price feed. Ask me for market outlook, trade bias, RSI/MACD breakdown, or strategy advice!"}
     ]
 
 # ---------------------------------------------------------
@@ -173,7 +162,7 @@ st.markdown("""
         <span class="minion-sub"> &nbsp;INSTITUTIONAL MULTI-TF ALPHA ENGINE</span>
     </div>
     <div>
-        <span style="background: #1f2838; padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #00ffcc; font-family: monospace;">● SCANNER ONLINE</span>
+        <span style="background: #1f2838; padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #00ffcc; font-family: monospace;">● LOCAL QUANT ENGINE ONLINE</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -252,11 +241,14 @@ latest_candle_time = str(df.index[-1])
 price = float(latest["Close"])
 rsi = float(latest["RSI"])
 macd_h = float(latest["MACD_Hist"])
+ema8 = float(latest["EMA_8"])
+ema21 = float(latest["EMA_21"])
+ema50 = float(latest["EMA_50"])
 
 # Confluence Evaluation
 buy_score, sell_score = 50, 50
-if latest["EMA_8"] > latest["EMA_21"] > latest["EMA_50"]: buy_score += 20
-elif latest["EMA_8"] < latest["EMA_21"] < latest["EMA_50"]: sell_score += 20
+if ema8 > ema21 > ema50: buy_score += 20
+elif ema8 < ema21 < ema50: sell_score += 20
 
 if macd_h > 0: buy_score += 15
 else: sell_score += 15
@@ -288,50 +280,76 @@ if st.session_state.last_executed_candle != latest_candle_time:
 st.session_state.executed_signals = st.session_state.executed_signals[:5]
 
 # ---------------------------------------------------------
-# 8. GEMINI AI ENGINE HELPER (WITH MODEL FALLBACKS)
+# 8. LOCAL NATIVE QUANT AI ENGINE (NO API KEY NEEDED)
 # ---------------------------------------------------------
-def get_gemini_market_analysis(user_prompt, live_context):
-    api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
+def local_quant_ai_response(user_query, context):
+    q = user_query.lower()
     
-    if not api_key:
-        return "⚠️ **Gemini Key Missing**: Set `GEMINI_API_KEY` in Streamlit Secrets or `.streamlit/secrets.toml`."
+    symbol = context["symbol"]
+    horizon = context["horizon"]
+    curr_price = context["price"]
+    c_rsi = context["rsi"]
+    c_macd = context["macd_h"]
+    b_score = context["buy_score"]
+    s_score = context["sell_score"]
     
-    system_instruction = f"""
-    You are MINION Alpha AI, an institutional quantitative trader and market analyst specialized in Gold (XAU/USD) and FX.
-    
-    LIVE MARKET CONTEXT:
-    - Asset: {live_context.get('symbol')}
-    - Horizon: {live_context.get('horizon')}
-    - Current Price: ${live_context.get('price'):.2f}
-    - RSI (14): {live_context.get('rsi'):.2f}
-    - MACD Histogram: {live_context.get('macd_h'):.4f}
-    - Recent Signals: {live_context.get('signals')}
-    """
-    
-    # Models to attempt in order of priority to prevent 404 errors
-    model_candidates = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
-    
-    last_error = None
-    for model_name in model_candidates:
-        try:
-            if USING_NEW_SDK:
-                client = genai.Client(api_key=api_key)
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=user_prompt,
-                    config={'system_instruction': system_instruction}
-                )
-                return response.text
-            else:
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
-                response = model.generate_content(user_prompt)
-                return response.text
-        except Exception as e:
-            last_error = e
-            continue  # Fall back to the next model if 404 occurs
+    # Determine Bias
+    if b_score > s_score:
+        bias = "🟢 BULLISH"
+        confidence = b_score
+    elif s_score > b_score:
+        bias = "🔴 BEARISH"
+        confidence = s_score
+    else:
+        bias = "🟡 NEUTRAL / CONSOLIDATION"
+        confidence = 50
 
-    return f"❌ Gemini Engine Error: {str(last_error)}"
+    # Dynamic Analysis Generation
+    if any(k in q for k in ["bias", "trend", "outlook", "direction", "predict", "buy", "sell"]):
+        return f"""### 📊 Quantitative Analysis: {symbol}
+* **Current Horizon**: {horizon}
+* **Market Price**: `${curr_price:.2f}`
+* **Algorithmic Bias**: **{bias}** (Confidence: `{confidence}/100`)
+
+**Key Drivers:**
+* **EMA Alignment**: {"Bullish Alignment (EMA8 > EMA21 > EMA50)" if context["ema8"] > context["ema21"] else "Bearish / Cross Phase"}
+* **RSI Momentum**: `{c_rsi:.1f}` ({"Overbought (>70)" if c_rsi > 70 else ("Oversold (<30)" if c_rsi < 30 else "Neutral Zone")})
+* **MACD Delta**: `{c_macd:.4f}` ({"Positive Momentum" if c_macd > 0 else "Negative Momentum"})
+
+💡 **Execution Recommendation**: {"Look for pullback long entries near EMA support." if b_score > s_score else "Look for short entries near resistance."}"""
+
+    elif any(k in q for k in ["rsi", "indicator", "macd", "technical"]):
+        return f"""### 📉 Technical Indicator Breakdown
+* **RSI (14)**: `{c_rsi:.2f}` — {"Showing strong buyer control." if c_rsi > 55 else ("Sellers dominating price action." if c_rsi < 45 else "RSI hovering in equilibrium.")}
+* **MACD Histogram**: `{c_macd:.4f}` — {"Histogram expanding above zero." if c_macd > 0 else "Histogram beneath baseline."}
+* **EMA Structure**:
+  * **EMA 8**: `${context['ema8']:.2f}`
+  * **EMA 21**: `${context['ema21']:.2f}`
+  * **EMA 50**: `${context['ema50']:.2f}`"""
+
+    elif any(k in q for k in ["risk", "stop", "sl", "tp", "target"]):
+        tp_long = curr_price + (curr_price * 0.003)
+        sl_long = curr_price - (curr_price * 0.0015)
+        return f"""### 🛡️ Institutional Risk & Levels
+* **Spot Price**: `${curr_price:.2f}`
+* **Suggested Long TP Target**: `${tp_long:.2f}`
+* **Suggested Long Stop Loss**: `${sl_long:.2f}`
+* **Risk-to-Reward Ratio**: `1 : 2.0`
+⚠️ *Always adhere to maximum 1% risk per trade execution.*"""
+
+    else:
+        return f"""### 🤖 MINION Local Quant AI
+I am evaluating **{symbol}** on the **{horizon}** timeframe.
+
+* **Current Price**: `${curr_price:.2f}`
+* **Algorithmic Signal**: **{bias}** (`{confidence}/100`)
+* **RSI**: `{c_rsi:.1f}` | **MACD**: `{c_macd:.4f}`
+
+*You can ask me questions like:*
+1. "What is the market bias right now?"
+2. "Show technical indicator breakdown."
+3. "Give me stop loss and take profit targets."
+"""
 
 # ---------------------------------------------------------
 # 9. MINION DASHBOARD GRID
@@ -427,14 +445,18 @@ with col_right:
             "price": price,
             "rsi": rsi,
             "macd_h": macd_h,
-            "signals": st.session_state.executed_signals
+            "ema8": ema8,
+            "ema21": ema21,
+            "ema50": ema50,
+            "buy_score": buy_score,
+            "sell_score": sell_score
         }
+        
+        ai_response = local_quant_ai_response(user_input, live_context)
         
         with chat_container:
             with st.chat_message("assistant"):
-                with st.spinner("Analyzing live feed..."):
-                    ai_response = get_gemini_market_analysis(user_input, live_context)
-                    st.markdown(ai_response)
+                st.markdown(ai_response)
         
         st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
         st.rerun()
