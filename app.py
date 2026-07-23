@@ -7,118 +7,147 @@ import pytz
 from streamlit_autorefresh import st_autorefresh
 from twelvedata import TDClient
 
-# Optional ML Library Guard
-try:
-    import xgboost as xgb
-    XGB_AVAILABLE = True
-except ImportError:
-    XGB_AVAILABLE = False
-
 # ---------------------------------------------------------
-# 1. PAGE CONFIGURATION & INITIALIZATION
+# 1. PAGE CONFIG & MINION STYLING
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="MINION Institutional Multi-TF Alpha Engine",
-    page_icon="⚡",
+    page_title="MINION | Live Gold & Multi-Asset Market Scanner",
+    page_icon="🤖",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# Auto-refresh timer for live polling (every 15 seconds)
-st_autorefresh(interval=15000, key="minion_institutional_refresh")
+# Auto-refresh timer for live feed polling (every 10 seconds)
+st_autorefresh(interval=10000, key="minion_live_poll")
+
+# Hardcoded Twelve Data API Key
+API_KEY = "a8c4eb7e1e424e479ea4c2f57b80fa65"
+eat_tz = pytz.timezone("Africa/Nairobi")
 
 st.markdown("""
 <style>
-    .stApp { background-color: #07090e; color: #e1e6ed; }
-    div[data-testid="stSidebar"] { background-color: #11141d; }
-    .minion-header {
-        background: linear-gradient(135deg, #1b263b 0%, #0d1117 100%);
-        border: 1px solid #00ffcc;
-        border-radius: 12px;
-        padding: 18px;
-        text-align: center;
-        margin-bottom: 15px;
-        box-shadow: 0 0 25px rgba(0, 255, 204, 0.12);
-    }
-    .minion-title {
-        color: #00ffcc;
-        font-size: 26px;
-        font-weight: 800;
-        letter-spacing: 2px;
-        margin: 0;
-        font-family: 'Courier New', monospace;
-    }
-    .minion-subtitle {
-        color: #8892b0;
-        font-size: 13px;
-        margin-top: 4px;
-    }
-    .ai-box {
-        background-color: #0d131f;
-        border-left: 4px solid #00ffcc;
-        padding: 15px;
-        border-radius: 4px;
-        margin-bottom: 15px;
+    /* Dark MINION Theme Styling */
+    .stApp { background-color: #0b0e14; color: #d0d7de; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    
+    /* Top Ticker Bar */
+    .ticker-bar {
+        background-color: #121722;
+        border-bottom: 1px solid #1f2838;
+        padding: 6px 12px;
+        font-size: 11px;
         font-family: monospace;
-        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 12px;
+        border-radius: 4px;
     }
+    .ticker-item { margin-right: 15px; }
+    .bullish { color: #00ffaa; }
+    .bearish { color: #ff4d4d; }
+    
+    /* MINION Header */
+    .minion-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background-color: #0e121a;
+        padding: 10px 18px;
+        border: 1px solid #232d3f;
+        border-radius: 8px;
+        margin-bottom: 10px;
+    }
+    .minion-logo { color: #f5c518; font-weight: 900; font-size: 22px; letter-spacing: 2px; }
+    .minion-sub { color: #6b778d; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
+
+    /* Signal Card Style */
+    .signal-card-buy {
+        background: #0f221c;
+        border: 1px solid #00ffaa;
+        border-left: 5px solid #00ffaa;
+        padding: 10px 14px;
+        border-radius: 6px;
+        margin-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .signal-card-sell {
+        background: #281318;
+        border: 1px solid #ff4d4d;
+        border-left: 5px solid #ff4d4d;
+        padding: 10px 14px;
+        border-radius: 6px;
+        margin-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .sig-badge-buy { background-color: #00ffaa; color: #000; font-weight: 800; padding: 2px 8px; border-radius: 3px; font-size: 11px; }
+    .sig-badge-sell { background-color: #ff4d4d; color: #fff; font-weight: 800; padding: 2px 8px; border-radius: 3px; font-size: 11px; }
+    .sig-price { font-family: monospace; font-size: 15px; font-weight: bold; color: #ffffff; }
+    .sig-time { color: #8892b0; font-size: 11px; font-family: monospace; }
+
+    /* Scanning Live Bottom Footer */
+    .scanning-footer {
+        background: linear-gradient(90deg, #ff0055 0%, #ff2e63 100%);
+        color: #ffffff;
+        font-weight: 800;
+        letter-spacing: 3px;
+        text-align: center;
+        padding: 10px;
+        border-radius: 8px;
+        font-size: 14px;
+        margin-top: 15px;
+        box-shadow: 0 0 15px rgba(255, 0, 85, 0.4);
+    }
+    
+    /* Hide Streamlit default chrome */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-if "master_history" not in st.session_state:
-    st.session_state.master_history = []
-if "last_signal_id" not in st.session_state:
-    st.session_state.last_signal_id = None
+# ---------------------------------------------------------
+# 2. STATE INITIALIZATION
+# ---------------------------------------------------------
+if "executed_signals" not in st.session_state:
+    st.session_state.executed_signals = []
+if "last_executed_candle" not in st.session_state:
+    st.session_state.last_executed_candle = None
 
 # ---------------------------------------------------------
-# 2. BRANDING & CLOCK HEADER
+# 3. TOP MINION BANNER & MACRO NEWS TICKER
 # ---------------------------------------------------------
 st.markdown("""
 <div class="minion-header">
-    <div class="minion-title">⚡ MINION INSTITUTIONAL SCALP & HOLD ENGINE ⚡</div>
-    <div class="minion-subtitle">Multi-Indicator Confluence • Scalp & Hold Horizon • Real-Time Twelve Data Feed • AI Breakdown</div>
+    <div>
+        <span class="minion-logo">MN | MINION</span>
+        <span class="minion-sub"> &nbsp;INSTITUTIONAL MULTI-TF ALPHA ENGINE</span>
+    </div>
+    <div>
+        <span style="background: #1f2838; padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #00ffcc; font-family: monospace;">● SCANNER ONLINE</span>
+    </div>
+</div>
+<div class="ticker-bar">
+    <span class="ticker-item"><span class="bullish">▲</span> Gold ETF Holdings Increase</span>
+    <span class="ticker-item"><span class="bearish">▼</span> US Dollar Gains on GDP Report</span>
+    <span class="ticker-item"><span class="bullish">▲</span> Gold Rises on Inflation Data</span>
+    <span class="ticker-item"><span class="bullish">◆</span> Fed Keeps Rates Unchanged</span>
+    <span class="ticker-item"><span class="bullish">▲</span> Central Banks Buy Gold Reserves</span>
 </div>
 """, unsafe_allow_html=True)
 
-clock_html = """
-<div style="background-color: #10141d; border: 1px solid #1f2838; padding: 8px 12px; border-radius: 6px; text-align: center; margin-bottom: 12px;">
-    <span style="color: #777; font-size: 12px; font-weight: bold; font-family: monospace;">SYSTEM TICK:</span>
-    <span id="live_clock" style="color: #00ffcc; font-size: 15px; font-weight: bold; font-family: monospace; margin-left: 8px;">--:--:--</span>
-</div>
-<script>
-function updateClock() {
-    const now = new Date();
-    const optionsEAT = { timeZone: 'Africa/Nairobi', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' };
-    document.getElementById("live_clock").innerText = new Intl.DateTimeFormat('en-GB', optionsEAT).format(now) + " EAT";
-}
-setInterval(updateClock, 1000);
-updateClock();
-</script>
-"""
-components.html(clock_html, height=45)
-
 # ---------------------------------------------------------
-# 3. API CONFIGURATION & STRATEGY SETUP
+# 4. CONFIGURATION CONTROLS
 # ---------------------------------------------------------
-# API Key is now hardcoded as requested
-api_key = "a8c4eb7e1e424e479ea4c2f57b80fa65"
-
-st.sidebar.header("🎯 Strategy & Horizon Setup")
-execution_mode = st.sidebar.selectbox(
-    "Select Operating Horizon",
-    [
-        "1-Minute Micro Scalp (Scalp Mode)",
-        "5-Minute Momentum Scalp (Scalp Mode)",
-        "15-Minute Trend Scalp (Scalp/Hold)",
-        "1-Hour Swing Position (Hold Mode)",
-        "4-Hour Macro Trend (Hold Mode)"
-    ]
-)
-
-selected_asset = st.sidebar.selectbox(
-    "Market Asset Pair",
-    ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD"]
-)
+with st.expander("⚙️ Controls & Strategy Configuration", expanded=False):
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        selected_asset = st.selectbox("Asset Pair", ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD"])
+    with c2:
+        execution_mode = st.selectbox("Timeframe Horizon", ["5-Minute Scalp", "1-Minute Micro", "15-Minute Trend", "1-Hour Swing"])
+    with c3:
+        min_threshold = st.slider("Min Confluence Threshold Score (/100)", 50, 90, 65)
 
 asset_map = {
     "Gold (Spot XAU/USD)": {"td": "XAU/USD", "tv": "OANDA:XAUUSD", "dec": 2},
@@ -127,332 +156,197 @@ asset_map = {
 }
 curr_info = asset_map[selected_asset]
 
-if "1-Minute" in execution_mode:
-    interval, td_interval, atr_mult_tp = "1m", "1min", 1.5
-elif "5-Minute" in execution_mode:
-    interval, td_interval, atr_mult_tp = "5m", "5min", 1.8
-elif "15-Minute" in execution_mode:
-    interval, td_interval, atr_mult_tp = "15m", "15min", 2.2
-elif "1-Hour" in execution_mode:
-    interval, td_interval, atr_mult_tp = "1h", "1h", 3.0
-else:
-    interval, td_interval, atr_mult_tp = "4h", "4h", 4.5
+td_interval_map = {"5-Minute Scalp": "5min", "1-Minute Micro": "1min", "15-Minute Trend": "15min", "1-Hour Swing": "1h"}
+tv_interval_map = {"5-Minute Scalp": "5", "1-Minute Micro": "1", "15-Minute Trend": "15", "1-Hour Swing": "60"}
 
-min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
+td_interval = td_interval_map[execution_mode]
+tv_tf = tv_interval_map[execution_mode]
 
 # ---------------------------------------------------------
-# 4. REAL-TIME DATA ENGINE (Twelve Data with Volume Safety)
+# 5. REAL-TIME DATA & INDICATOR ENGINE
 # ---------------------------------------------------------
-@st.cache_data(ttl=15, show_spinner=False)
-def fetch_twelve_data_feed(symbol_string, interval_string, key):
+@st.cache_data(ttl=8, show_spinner=False)
+def fetch_realtime_data(symbol, interval, key):
     try:
         td = TDClient(apikey=key)
-        ts = td.time_series(
-            symbol=symbol_string,
-            interval=interval_string,
-            outputsize=120,
-            timezone="Africa/Nairobi"
-        )
+        ts = td.time_series(symbol=symbol, interval=interval, outputsize=80, timezone="Africa/Nairobi")
         df = ts.as_pandas()
-        if df.empty:
-            return None, "No data returned from Twelve Data API."
-            
-        available_cols = [col.lower() for col in df.columns]
-        cols_to_extract = ["open", "high", "low", "close"]
-        
-        df = df[[c for c in cols_to_extract if c in available_cols]].astype(float)
-        
-        if "volume" in available_cols:
-            df["Volume"] = df.get("volume", 0.0).astype(float)
-        else:
-            df["Volume"] = 0.0
-            
-        df.columns = ["Open", "High", "Low", "Close", "Volume"]
-        df = df.sort_index()
-        return df, None
+        if df.empty: return None, "No feed data."
+        df = df[["open", "high", "low", "close"]].astype(float)
+        df.columns = ["Open", "High", "Low", "Close"]
+        return df.sort_index(), None
     except Exception as e:
-        return None, f"Twelve Data Connection Error: {e}"
+        return None, str(e)
 
-with st.spinner("Syncing real-time institutional feeds..."):
-    raw_df, fetch_error = fetch_twelve_data_feed(curr_info["td"], td_interval, api_key)
+raw_df, err = fetch_realtime_data(curr_info["td"], td_interval, API_KEY)
 
-if fetch_error:
-    st.error(f"⚠️ Feed Error: {fetch_error}")
+if err or raw_df is None:
+    st.error(f"⚠️ Feed Sync Error: {err}")
     st.stop()
 
+# Indicator Calculation
+raw_df["EMA_8"] = raw_df["Close"].ewm(span=8, adjust=False).mean()
+raw_df["EMA_21"] = raw_df["Close"].ewm(span=21, adjust=False).mean()
+raw_df["EMA_50"] = raw_df["Close"].ewm(span=50, adjust=False).mean()
+
+delta = raw_df["Close"].diff()
+gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
+loss = -delta.where(delta < 0, 0).ewm(alpha=1/14, adjust=False).mean()
+raw_df["RSI"] = 100 - (100 / (1 + (gain / loss)))
+
+raw_df["MACD"] = raw_df["Close"].ewm(span=12).mean() - raw_df["Close"].ewm(span=26).mean()
+raw_df["MACD_Sig"] = raw_df["MACD"].ewm(span=9).mean()
+raw_df["MACD_Hist"] = raw_df["MACD"] - raw_df["MACD_Sig"]
+
+df = raw_df.dropna()
+latest = df.iloc[-1]
+latest_candle_time = str(df.index[-1])
+
+price = float(latest["Close"])
+rsi = float(latest["RSI"])
+macd_h = float(latest["MACD_Hist"])
+
+# Confluence Evaluation
+buy_score, sell_score = 50, 50
+if latest["EMA_8"] > latest["EMA_21"] > latest["EMA_50"]: buy_score += 20
+elif latest["EMA_8"] < latest["EMA_21"] < latest["EMA_50"]: sell_score += 20
+
+if macd_h > 0: buy_score += 15
+else: sell_score += 15
+
+if 50 < rsi < 75: buy_score += 15
+elif 25 < rsi < 50: sell_score += 15
+
 # ---------------------------------------------------------
-# 5. TECHNICAL INDICATORS & CONFLUENCE SCORING
+# 6. STRICT 1 SIGNAL EXECUTION PER CANDLE LOGIC
 # ---------------------------------------------------------
-eat_tz = pytz.timezone("Africa/Nairobi")
+if st.session_state.last_executed_candle != latest_candle_time:
+    if buy_score >= min_threshold and buy_score >= sell_score:
+        st.session_state.last_executed_candle = latest_candle_time
+        st.session_state.executed_signals.insert(0, {
+            "type": "BUY",
+            "price": f"${price:.{curr_info['dec']}f}",
+            "time": datetime.now(eat_tz).strftime("%H:%M:%S"),
+            "candle": latest_candle_time
+        })
+    elif sell_score >= min_threshold and sell_score > buy_score:
+        st.session_state.last_executed_candle = latest_candle_time
+        st.session_state.executed_signals.insert(0, {
+            "type": "SELL",
+            "price": f"${price:.{curr_info['dec']}f}",
+            "time": datetime.now(eat_tz).strftime("%H:%M:%S"),
+            "candle": latest_candle_time
+        })
 
-def process_all_indicators(df):
-    if df.empty: 
-        return df
-    if df.index.tz is None:
-        df.index = df.index.tz_localize("UTC").tz_convert(eat_tz)
-    else:
-        df.index = df.index.tz_convert(eat_tz)
-        
-    df["EMA_8"] = df["Close"].ewm(span=8, adjust=False).mean()
-    df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
-    df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
-    
-    delta = df["Close"].diff()
-    gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
-    loss = -delta.where(delta < 0, 0).ewm(alpha=1/14, adjust=False).mean()
-    df["RSI"] = 100 - (100 / (1 + (gain / loss)))
-    
-    df["MACD"] = df["Close"].ewm(span=12).mean() - df["Close"].ewm(span=26).mean()
-    df["MACD_Sig"] = df["MACD"].ewm(span=9).mean()
-    df["MACD_Hist"] = df["MACD"] - df["MACD_Sig"]
-    
-    df["BB_Mid"] = df["Close"].rolling(window=20).mean()
-    bb_std = df["Close"].rolling(window=20).std()
-    df["BB_Upper"] = df["BB_Mid"] + (bb_std * 2)
-    df["BB_Lower"] = df["BB_Mid"] - (bb_std * 2)
-    
-    tr = pd.concat([
-        df["High"] - df["Low"],
-        (df["High"] - df["Close"].shift()).abs(),
-        (df["Low"] - df["Close"].shift()).abs()
-    ], axis=1).max(axis=1)
-    df["ATR"] = tr.ewm(span=14, adjust=False).mean()
-    return df.dropna()
+st.session_state.executed_signals = st.session_state.executed_signals[:5]
 
-active_df = process_all_indicators(raw_df)
+# ---------------------------------------------------------
+# 7. MINION DASHBOARD GRID (CHART LEFT, SIGNALS & CHAT RIGHT)
+# ---------------------------------------------------------
+col_left, col_right = st.columns([2.6, 1.2])
 
-if not active_df.empty:
-    latest = active_df.iloc[-1]
-    price = float(latest["Close"])
-    atr = float(latest["ATR"])
-    rsi = float(latest["RSI"])
-    macd_hist = float(latest["MACD_Hist"])
-
-    def evaluate_confluence(row):
-        b_score, s_score = 50, 50
-        reasons_buy = []
-        reasons_sell = []
-
-        if row["EMA_8"] > row["EMA_21"] > row["EMA_50"]:
-            b_score += 15
-            reasons_buy.append("EMA Ribbon aligned bullish (8 > 21 > 50)")
-        elif row["EMA_8"] < row["EMA_21"] < row["EMA_50"]:
-            s_score += 15
-            reasons_sell.append("EMA Ribbon aligned bearish (8 < 21 < 50)")
-
-        if row["MACD_Hist"] > 0:
-            b_score += 15
-            reasons_buy.append("MACD momentum histogram is positive")
-        else:
-            s_score += 15
-            reasons_sell.append("MACD momentum histogram is negative")
-
-        if 50 < row["RSI"] < 75:
-            b_score += 10
-            reasons_buy.append(f"RSI indicator in bullish zone ({row['RSI']:.1f})")
-        elif 25 < row["RSI"] < 50:
-            s_score += 10
-            reasons_sell.append(f"RSI indicator in bearish zone ({row['RSI']:.1f})")
-
-        if row["Close"] <= row["BB_Lower"]:
-            b_score += 10
-            reasons_buy.append("Price testing lower Bollinger Band boundary (Bounce setup)")
-        elif row["Close"] >= row["BB_Upper"]:
-            s_score += 10
-            reasons_sell.append("Price testing upper Bollinger Band boundary (Fade setup)")
-
-        return b_score, s_score, reasons_buy, reasons_sell
-
-    buy_score, s_score, buy_reasons, sell_reasons = evaluate_confluence(latest)
-
-    ml_win_prob = 0.55
-    if XGB_AVAILABLE and len(active_df) > 30:
-        try:
-            feat_cols = ["RSI", "MACD_Hist", "ATR", "EMA_8", "EMA_21", "EMA_50"]
-            train_sub = active_df.copy()
-            tp_forward = train_sub["Close"] + (train_sub["ATR"] * atr_mult_tp)
-            outcome = [1 if (train_sub["High"].iloc[i+1:i+3] >= tp_forward.iloc[i]).any() else 0 for i in range(len(train_sub) - 3)]
-            if len(outcome) > 20:
-                train_sub = train_sub.iloc[:len(outcome)]
-                train_sub["Target_Outcome"] = outcome
-                model_xgb = xgb.XGBClassifier(n_estimators=10, max_depth=2, verbosity=0)
-                model_xgb.fit(train_sub[feat_cols], train_sub["Target_Outcome"])
-                ml_win_prob = float(model_xgb.predict_proba(pd.DataFrame([latest[feat_cols]], columns=feat_cols))[0][1])
-        except Exception:
-            pass
-
-    signal = "NEUTRAL / WAIT ⚪"
-    sl, tp1, tp2 = 0.0, 0.0, 0.0
-    active_reasons = []
-
-    if buy_score >= min_score_threshold and buy_score >= s_score:
-        signal = "BUY EXECUTE 🚀"
-        sl = price - (atr * 1.0)
-        tp1 = price + (atr * atr_mult_tp)
-        tp2 = price + (atr * (atr_mult_tp * 1.6))
-        active_reasons = buy_reasons
-    elif s_score >= min_score_threshold and s_score > buy_score:
-        signal = "SELL EXECUTE 📉"
-        sl = price + (atr * 1.0)
-        tp1 = price - (atr * atr_mult_tp)
-        tp2 = price - (atr * (atr_mult_tp * 1.6))
-        active_reasons = sell_reasons
-
-    current_candle_timestamp = str(active_df.index[-1])
-    signal_id = f"{selected_asset}_{interval}_{signal}_{current_candle_timestamp}"
-
-    if signal in ["BUY EXECUTE 🚀", "SELL EXECUTE 📉"]:
-        if signal_id != st.session_state.last_signal_id:
-            st.session_state.last_signal_id = signal_id
-            st.session_state.master_history.append({
-                "time": datetime.now(eat_tz).strftime("%H:%M:%S"),
-                "horizon": execution_mode.split("(")[0].strip(),
-                "asset": selected_asset,
-                "action": signal,
-                "entry": round(price, curr_info["dec"]),
-                "tp1": round(tp1, curr_info["dec"]),
-                "sl": round(sl, curr_info["dec"]),
-                "score": f"Buy:{buy_score} | Sell:{s_score}",
-                "status": "ACTIVE ⚡"
-            })
-
-    for item in st.session_state.master_history:
-        if item["status"] == "ACTIVE ⚡" and item["asset"] == selected_asset:
-            if "BUY" in item["action"]:
-                if price >= item["tp1"]: item["status"] = "WIN (TP) ✅"
-                elif price <= item["sl"]: item["status"] = "LOSS (SL) ❌"
-            elif "SELL" in item["action"]:
-                if price <= item["tp1"]: item["status"] = "WIN (TP) ✅"
-                elif price >= item["sl"]: item["status"] = "LOSS (SL) ❌"
-
-    # ---------------------------------------------------------
-    # 6. DASHBOARD METRICS & AI EXPLANATION LAYER
-    # ---------------------------------------------------------
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Live Price Feed", f"${price:.{curr_info['dec']}f}")
-    col2.metric("Horizon Mode", execution_mode.split("(")[1].replace(")", ""))
-    col3.metric("Signal Output", signal)
-    col4.metric("Confluence Score", f"B:{buy_score} | S:{s_score}")
-    col5.metric("AI Confidence Edge", f"{ml_win_prob*100:.1f}%")
-
-    st.markdown("### 🤖 AI Market Analyst Explanation")
-    reason_bullet_str = "".join([f"<li>{r}</li>" for r in active_reasons]) if active_reasons else "<li>Market conditions are currently mixed; awaiting clearer multi-indicator confluence.</li>"
-    
-    ai_explanation_html = f"""
-    <div class="ai-box">
-        <b>Real-Time Analysis Breakdown ({selected_asset} @ {interval}):</b><br>
-        The engine evaluated current price action against multi-indicator technical confluence (EMA ribbon hierarchy, RSI momentum oscillators, MACD histogram, and Bollinger Band boundaries).<br><br>
-        <b>Detected Technical Factors:</b>
-        <ul>
-            {reason_bullet_str}
-        </ul>
-        <b>Execution Outlook:</b> Composite scoring yields a rating of <b>{max(buy_score, s_score)}/100</b> with an estimated win probability of <b>{ml_win_prob*100:.1f}%</b> under the selected {execution_mode}.
+# --- LEFT COLUMN: LIVE TRADINGVIEW CHART ---
+with col_left:
+    tv_html = f"""
+    <div class="tradingview-widget-container" style="height:540px;width:100%">
+      <div id="tv_minion_chart" style="height:540px;width:100%"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget({{
+        "autosize": true,
+        "symbol": "{curr_info['tv']}",
+        "interval": "{tv_tf}",
+        "timezone": "Africa/Nairobi",
+        "theme": "dark",
+        "style": "1",
+        "locale": "en",
+        "toolbar_bg": "#0b0e14",
+        "enable_publishing": false,
+        "allow_symbol_change": true,
+        "container_id": "tv_minion_chart"
+      }});
+      </script>
     </div>
     """
-    st.markdown(ai_explanation_html, unsafe_allow_html=True)
+    components.html(tv_html, height=545)
+    
+    st.markdown('<div class="scanning-footer">• SCANNING LIVE •</div>', unsafe_allow_html=True)
+
+# --- RIGHT COLUMN: SIGNALS, NEWS & OMNI-MARKET AI CHAT ---
+with col_right:
+    # 1. LIVE SIGNALS PANEL
+    st.markdown("<h4 style='color:#f5c518; margin-bottom:8px; font-size:14px;'>⚡ LIVE EXECUTED SIGNALS</h4>", unsafe_allow_html=True)
+    
+    if st.session_state.executed_signals:
+        for idx, sig in enumerate(st.session_state.executed_signals):
+            badge_class = "sig-badge-buy" if sig["type"] == "BUY" else "sig-badge-sell"
+            card_class = "signal-card-buy" if sig["type"] == "BUY" else "signal-card-sell"
+            latest_tag = " <span style='color:#f5c518; font-size:9px; font-weight:bold;'>[LATEST]</span>" if idx == 0 else ""
+            
+            card_html = f"""
+            <div class="{card_class}">
+                <div>
+                    <span class="{badge_class}">{sig['type']}</span>
+                    {latest_tag}
+                </div>
+                <div class="sig-price">{sig['price']}</div>
+                <div class="sig-time">{sig['time']}</div>
+            </div>
+            """
+            st.markdown(card_html, unsafe_allow_html=True)
+    else:
+        st.info("Scanning candle close for threshold confluence setup...")
 
     st.divider()
-    chart_col, journal_col = st.columns([3, 1])
-    tv_tf = {"1m": "1", "5m": "5", "15m": "15", "1h": "60", "4h": "240"}.get(interval, "1")
 
-    with chart_col:
-        st.subheader(f"📊 Live TradingView Terminal ({selected_asset} - {interval})")
-        tv_html = f"""
-        <div class="tradingview-widget-container" style="height:520px;width:100%">
-          <div id="tv_institutional_container" style="height:520px;width:100%"></div>
-          <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-          <script type="text/javascript">
-          new TradingView.widget({{
-            "autosize": true,
-            "symbol": "{curr_info['tv']}",
-            "interval": "{tv_tf}",
-            "timezone": "Africa/Nairobi",
-            "theme": "dark",
-            "style": "1",
-            "locale": "en",
-            "toolbar_bg": "#11141d",
-            "enable_publishing": false,
-            "allow_symbol_change": true,
-            "container_id": "tv_institutional_container"
-          }});
-          </script>
-        </div>
-        """
-        components.html(tv_html, height=530)
+    # 2. BREAKING NEWS & SENTIMENT PANEL
+    st.markdown("<h4 style='color:#f5c518; margin-bottom:8px; font-size:14px;'>📰 BREAKING NEWS & SENTIMENT</h4>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="background-color:#121722; padding:8px 12px; border-radius:5px; margin-bottom:6px; font-size:12px;">
+        <span style="color:#00ffaa; font-weight:bold;">▲ BULLISH</span> <span style="color:#777;">Reuters</span><br>
+        <span style="color:#eee;">Gold Rises on Weakening US Dollar & Treasury Yields</span>
+    </div>
+    <div style="background-color:#121722; padding:8px 12px; border-radius:5px; margin-bottom:12px; font-size:12px;">
+        <span style="color:#ffaa00; font-weight:bold;">◆ NEUTRAL</span> <span style="color:#777;">Bloomberg</span><br>
+        <span style="color:#eee;">Fed Holds Interest Rates Steady Pending Macro CPI Data</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-    with journal_col:
-        st.subheader("📋 Master Journal")
-        if st.session_state.master_history:
-            j_df = pd.DataFrame(st.session_state.master_history).tail(8)
-            cols = ["time", "horizon", "action", "entry", "tp1", "sl", "status"]
-            j_df = j_df[[c for c in cols if c in j_df.columns]]
-            
-            wins = len(j_df[j_df["status"].str.contains("WIN")])
-            total_closed = len(j_df[~j_df["status"].str.contains("ACTIVE")])
-            win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
-            
-            st.metric("Model Win-Rate", f"{win_rate:.1f}%", f"{wins}/{total_closed} Completed")
-            st.dataframe(j_df, use_container_width=True)
-        else:
-            st.caption("Awaiting signals.")
+    # 3. OMNI-MARKET AI ASSISTANT CHAT
+    st.markdown("<h4 style='color:#f5c518; margin-bottom:4px; font-size:14px;'>🤖 MINION AI ASSISTANT</h4>", unsafe_allow_html=True)
 
-    # ---------------------------------------------------------
-    # 7. INTERACTIVE AI ASSISTANT CHAT (Omni-Market Upgrade)
-    # ---------------------------------------------------------
-    st.divider()
-    st.subheader("💬 Ask MINION AI Assistant")
-
-    if "chat_messages" not in st.session_state:
-        st.session_state.chat_messages = [
-            {"role": "assistant", "content": f"Hello! I am your {selected_asset} market assistant. Ask me anything about live indicators, trade setups, trading strategies, macroeconomics, or market concepts."}
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = [
+            {"role": "assistant", "content": "I'm MINION, scanning live market feeds. Ask me anything about signals, technicals, Federal Reserve policy, or trading strategies."}
         ]
 
-    for message in st.session_state.chat_messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    chat_container = st.container(height=200)
+    with chat_container:
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
 
-    if user_query := st.chat_input("Ask about signals, indicators, strategies, or general market questions..."):
-        st.session_state.chat_messages.append({"role": "user", "content": user_query})
-        with st.chat_message("user"):
-            st.markdown(user_query)
+    if query := st.chat_input("Ask anything..."):
+        st.session_state.chat_history.append({"role": "user", "content": query})
+        
+        q_lower = query.lower()
+        
+        if "price" in q_lower or ("gold" in q_lower and "what" in q_lower):
+            ans = f"Current live price for {selected_asset} is **${price:.{curr_info['dec']}f}** on the {execution_mode} timeframe."
+        elif "signal" in q_lower or "latest" in q_lower:
+            if st.session_state.executed_signals:
+                top_sig = st.session_state.executed_signals[0]
+                ans = f"The latest executed signal is **{top_sig['type']}** at **{top_sig['price']}** (Time: {top_sig['time']})."
+            else:
+                ans = "No signal executed yet for the current bar setup."
+        elif "rsi" in q_lower:
+            ans = f"The current 14-period RSI indicator is reading **{rsi:.1f}**."
+        elif "fed" in q_lower or "rate" in q_lower or "news" in q_lower or "dollar" in q_lower:
+            ans = "Central bank policy directly impacts Gold ($XAU/USD). Rate pause or cuts typically weaken the US Dollar, creating bullish momentum for non-yielding assets like Gold."
+        elif "strategy" in q_lower or "how" in q_lower:
+            ans = f"MINION evaluates EMA ribbon crossovers (8/21/50), MACD histogram momentum, and RSI boundaries. A signal executes strictly once per candle when confluence reaches {min_threshold}/100."
+        else:
+            ans = f"Regarding your question about structural market dynamics: Gold is currently trading at **${price:.{curr_info['dec']}f}** with RSI at **{rsi:.1f}**. Ensure strict risk-to-reward parameters when acting on signals!"
 
-        with st.chat_message("assistant"):
-            with st.spinner("Processing inquiry..."):
-                query_lower = user_query.lower()
-                
-                # 1. Live Context Checks
-                if "price" in query_lower:
-                    reply = f"The current live price for {selected_asset} on the {interval} timeframe is **${price:.{curr_info['dec']}f}**."
-                elif "score" in query_lower or "confluence" in query_lower:
-                    reply = f"Current confluence scores are **Buy: {buy_score}/100** and **Sell: {s_score}/100** (Threshold required: {min_score_threshold})."
-                elif "rsi" in query_lower:
-                    reply = f"The current RSI (14) value is **{rsi:.1f}**."
-                elif "signal" in query_lower:
-                    reply = f"The current active signal output is: **{signal}**."
-                elif "sl" in query_lower or "stop" in query_lower or "tp" in query_lower:
-                    reply = f"Current risk parameters — Stop Loss (SL): **${sl:.{curr_info['dec']}f}** | Take Profit 1 (TP1): **${tp1:.{curr_info['dec']}f}**."
-                
-                # 2. General Trading & Market Knowledge Fallbacks
-                elif "trend" in query_lower:
-                    reply = "A market trend describes the general direction in which an asset's price is moving over a specific interval. Trends can be upward (bullish), downward (bearish), or sideways (ranging). Using tools like EMA ribbons helps confirm trend continuity."
-                elif "support" in query_lower or "resistance" in query_lower:
-                    reply = "Support levels are price floors where buying interest tends to overcome selling pressure, preventing further drops. Resistance levels are price ceilings where selling pressure overcomes buying interest, halting upward movement."
-                elif "risk" in query_lower or "management" in query_lower:
-                    reply = "Institutional risk management relies on strict risk-to-reward ratios, position sizing based on Average True Range (ATR), and never risking more than 1% to 2% of total capital on a single trade setup."
-                elif "scalp" in query_lower:
-                    reply = "Scalping involves taking advantage of small price changes over micro-timeframes (like 1m or 5m charts). It requires tight stop losses, high execution speed, and strict adherence to momentum indicators."
-                elif "strategy" in query_lower or "how to use" in query_lower:
-                    reply = f"To trade effectively with MINION, monitor the composite score threshold ({min_score_threshold}/100). Wait for multi-indicator confluence—such as aligned EMAs and positive MACD histograms—before executing within your chosen {execution_mode}."
-                
-                # 3. Dynamic General Catch-All
-                else:
-                    reply = (
-                        f"That's a great question regarding the markets. While I am primarily tuned to monitor **{selected_asset}** under your active **{execution_mode}**, "
-                        f"general market success relies on solid risk management, structural multi-timeframe alignment, and keeping a close eye on momentum indicators like RSI and MACD. "
-                        f"Feel free to ask me specifics about **price**, **RSI**, **scores**, **signals**, **support/resistance**, or **risk management**!"
-                    )
-                
-                st.markdown(reply)
-                st.session_state.chat_messages.append({"role": "assistant", "content": reply})
-else:
-    st.error("⚠️ Unable to process real-time indicator feeds.")
+        st.session_state.chat_history.append({"role": "assistant", "content": ans})
+        st.rerun()
