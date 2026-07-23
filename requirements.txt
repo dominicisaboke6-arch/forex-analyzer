@@ -1,7 +1,8 @@
 streamlit
-yfinance
+streamlit-autorefresh
 pandas
 numpy
-plotly
 pytz
-streamlit-autorefresh
+twelvedata
+xgboost
+yfinance
