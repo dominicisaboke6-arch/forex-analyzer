@@ -13,12 +13,13 @@ from twelvedata import TDClient
 # 1. PAGE CONFIG & STYLING
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="MINION | Live Gold & Multi-Asset Market Scanner",
+    page_title="MINION | Live Gold & Multi-Asset Alpha Engine",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
+# Auto-refresh live data every 10 seconds
 st_autorefresh(interval=10000, key="minion_live_poll")
 
 API_KEY = "a8c4eb7e1e424e479ea4c2f57b80fa65"
@@ -39,7 +40,7 @@ st.markdown("""
         border: 1px solid #1f2838;
         border-radius: 6px;
         padding: 6px 0;
-        margin-bottom: 12px;
+        margin-bottom: 10px;
         white-space: nowrap;
     }
     .ticker-content {
@@ -64,21 +65,46 @@ st.markdown("""
     .minion-logo { color: #f5c518; font-weight: 900; font-size: 22px; letter-spacing: 2px; }
     .minion-sub { color: #6b778d; font-size: 11px; font-weight: 600; letter-spacing: 1px; }
 
+    /* PROBABILITY & TOP SIGNAL BAR */
+    .top-prob-bar {
+        background-color: #121722;
+        border: 1px solid #1f2838;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 12px;
+    }
+    .prob-badge-buy { background: #00ffaa; color: #000; font-weight: 800; padding: 4px 10px; border-radius: 4px; font-size: 12px; }
+    .prob-badge-sell { background: #ff4d4d; color: #fff; font-weight: 800; padding: 4px 10px; border-radius: 4px; font-size: 12px; }
+    .prob-badge-neutral { background: #ffaa00; color: #000; font-weight: 800; padding: 4px 10px; border-radius: 4px; font-size: 12px; }
+    
+    .prob-meter-bg {
+        width: 100%;
+        background-color: #1a2230;
+        border-radius: 4px;
+        height: 10px;
+        display: flex;
+        overflow: hidden;
+        margin: 6px 0;
+    }
+    .prob-meter-buy { background-color: #00ffaa; height: 100%; transition: width 0.5s; }
+    .prob-meter-sell { background-color: #ff4d4d; height: 100%; transition: width 0.5s; }
+
+    /* SIGNAL CARDS */
     .aurum-sig-card {
         background-color: #121722;
         border: 1px solid #1f2838;
         border-radius: 6px;
-        padding: 10px 14px;
-        margin-bottom: 8px;
+        padding: 8px 12px;
+        margin-bottom: 6px;
         display: flex;
         align-items: center;
         justify-content: space-between;
     }
-    .sig-buy-badge { background-color: #00ffaa; color: #000; font-weight: 800; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
-    .sig-sell-badge { background-color: #ff4d4d; color: #fff; font-weight: 800; padding: 3px 8px; border-radius: 4px; font-size: 11px; }
-    .sig-price-center { color: #f5c518; font-family: monospace; font-size: 15px; font-weight: bold; }
-    .sig-latest-pill { background-color: #f5c518; color: #000; font-weight: 800; font-size: 9px; padding: 1px 5px; border-radius: 3px; margin-left: 6px; }
-    .sig-time-right { color: #6b778d; font-size: 11px; font-family: monospace; }
+    .sig-buy-badge { background-color: #00ffaa; color: #000; font-weight: 800; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+    .sig-sell-badge { background-color: #ff4d4d; color: #fff; font-weight: 800; padding: 2px 6px; border-radius: 4px; font-size: 10px; }
+    .sig-price-center { color: #f5c518; font-family: monospace; font-size: 13px; font-weight: bold; }
+    .sig-latest-pill { background-color: #f5c518; color: #000; font-weight: 800; font-size: 8px; padding: 1px 4px; border-radius: 3px; margin-left: 4px; }
+    .sig-time-right { color: #6b778d; font-size: 10px; font-family: monospace; }
 
     .scanning-footer {
         background: linear-gradient(90deg, #ff0055 0%, #ff2e63 100%);
@@ -86,11 +112,11 @@ st.markdown("""
         font-weight: 800;
         letter-spacing: 3px;
         text-align: center;
-        padding: 10px;
-        border-radius: 8px;
-        font-size: 14px;
-        margin-top: 15px;
-        box-shadow: 0 0 15px rgba(255, 0, 85, 0.4);
+        padding: 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        margin-top: 10px;
+        box-shadow: 0 0 12px rgba(255, 0, 85, 0.4);
     }
     
     #MainMenu {visibility: hidden;}
@@ -106,10 +132,8 @@ def fetch_live_market_news(query="gold price XAUUSD Fed"):
     try:
         url = f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en-US&gl=US&ceid=US:en"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        
         with urllib.request.urlopen(req, timeout=5) as response:
             xml_data = response.read()
-        
         root = ET.fromstring(xml_data)
         items = root.findall('.//channel/item')
         
@@ -140,16 +164,20 @@ def fetch_live_market_news(query="gold price XAUUSD Fed"):
 
 live_news = fetch_live_market_news("gold price XAUUSD Fed")
 
+# Calculate News Fundamental Sentiment Shift
+bullish_news_count = sum(1 for n in live_news if n['sentiment'] == "BULLISH")
+bearish_news_count = sum(1 for n in live_news if n['sentiment'] == "BEARISH")
+
 # ---------------------------------------------------------
-# 3. STATE INITIALIZATION
+# 3. STATE INITIALIZATION (PERSIST HISTORICAL SIGNALS)
 # ---------------------------------------------------------
-if "executed_signals" not in st.session_state:
-    st.session_state.executed_signals = []
+if "signal_history" not in st.session_state:
+    st.session_state.signal_history = []
 if "last_executed_candle" not in st.session_state:
     st.session_state.last_executed_candle = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
-        {"role": "assistant", "content": "🤖 **MINION Local Quant Engine Active** (No API Key Required). I am connected to your live price feed. Ask me for market outlook, trade bias, RSI/MACD breakdown, or strategy advice!"}
+        {"role": "assistant", "content": "🤖 **MINION Institutional Quant Engine Active**. Real-time probability models, signal persistence, and structural market analyses are loaded."}
     ]
 
 # ---------------------------------------------------------
@@ -162,7 +190,7 @@ st.markdown("""
         <span class="minion-sub"> &nbsp;INSTITUTIONAL MULTI-TF ALPHA ENGINE</span>
     </div>
     <div>
-        <span style="background: #1f2838; padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #00ffcc; font-family: monospace;">● LOCAL QUANT ENGINE ONLINE</span>
+        <span style="background: #1f2838; padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #00ffcc; font-family: monospace;">● LIVE MARKET SCANNER ACTIVE</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -183,7 +211,7 @@ with st.expander("⚙️ Controls & Strategy Configuration", expanded=False):
     with c2:
         execution_mode = st.selectbox("Timeframe Horizon", ["5-Minute Scalp", "1-Minute Micro", "15-Minute Trend", "1-Hour Swing"])
     with c3:
-        min_threshold = st.slider("Min Confluence Threshold Score (/100)", 50, 90, 65)
+        min_threshold = st.slider("Min Confluence Threshold Score (/100)", 50, 90, 60)
 
 asset_map = {
     "Gold (Spot XAU/USD)": {"td": "XAU/USD", "tv": "OANDA:XAUUSD", "dec": 2},
@@ -220,7 +248,7 @@ if err or raw_df is None:
     st.error(f"⚠️ Feed Sync Error: {err}")
     st.stop()
 
-# Technical Indicators
+# Indicators & Market Structure Dynamics
 raw_df["EMA_8"] = raw_df["Close"].ewm(span=8, adjust=False).mean()
 raw_df["EMA_21"] = raw_df["Close"].ewm(span=21, adjust=False).mean()
 raw_df["EMA_50"] = raw_df["Close"].ewm(span=50, adjust=False).mean()
@@ -245,122 +273,167 @@ ema8 = float(latest["EMA_8"])
 ema21 = float(latest["EMA_21"])
 ema50 = float(latest["EMA_50"])
 
-# Confluence Evaluation
+# ---------------------------------------------------------
+# 7. MARKET STRUCTURE & PROBABILITY CALCULATION ENGINE
+# ---------------------------------------------------------
 buy_score, sell_score = 50, 50
-if ema8 > ema21 > ema50: buy_score += 20
-elif ema8 < ema21 < ema50: sell_score += 20
 
-if macd_h > 0: buy_score += 15
-else: sell_score += 15
+# Market Structure (Trend Stack & Price Position)
+if price > ema8 > ema21 > ema50:
+    buy_score += 20
+    market_struct = "BULLISH EXPANSION (Higher Highs / Higher Lows)"
+elif price < ema8 < ema21 < ema50:
+    sell_score += 20
+    market_struct = "BEARISH EXPANSION (Lower Highs / Lower Lows)"
+elif price > ema50:
+    buy_score += 10
+    market_struct = "BULLISH RECOVERY ABOVE EMA 50"
+else:
+    sell_score += 10
+    market_struct = "BEARISH PRESSURE BELOW EMA 50"
 
-if 50 < rsi < 75: buy_score += 15
-elif 25 < rsi < 50: sell_score += 15
+# Technical Momentum (RSI & MACD)
+if macd_h > 0: buy_score += 12
+else: sell_score += 12
+
+if 50 <= rsi <= 70: buy_score += 10
+elif 30 <= rsi < 50: sell_score += 10
+elif rsi > 70: sell_score += 5  # Overbought pullback risk
+elif rsi < 30: buy_score += 5   # Oversold bounce potential
+
+# Fundamental News Sentiment Shift
+buy_score += (bullish_news_count * 3)
+sell_score += (bearish_news_count * 3)
+
+total_weight = buy_score + sell_score
+buy_prob = int(round((buy_score / total_weight) * 100))
+sell_prob = 100 - buy_prob
 
 # ---------------------------------------------------------
-# 7. SIGNAL EXECUTION
+# 8. SIGNAL GENERATION & PERSISTENCE
 # ---------------------------------------------------------
 if st.session_state.last_executed_candle != latest_candle_time:
-    if buy_score >= min_threshold and buy_score >= sell_score:
+    if buy_score >= min_threshold and buy_prob >= 58:
         st.session_state.last_executed_candle = latest_candle_time
-        st.session_state.executed_signals.insert(0, {
+        st.session_state.signal_history.insert(0, {
             "type": "BUY",
+            "asset": selected_asset,
             "price": f"${price:.{curr_info['dec']}f}",
+            "prob": buy_prob,
             "time": datetime.now(eat_tz).strftime("%H:%M:%S"),
-            "candle": latest_candle_time
+            "candle": latest_candle_time,
+            "horizon": execution_mode,
+            "structure": market_struct
         })
-    elif sell_score >= min_threshold and sell_score > buy_score:
+    elif sell_score >= min_threshold and sell_prob >= 58:
         st.session_state.last_executed_candle = latest_candle_time
-        st.session_state.executed_signals.insert(0, {
+        st.session_state.signal_history.insert(0, {
             "type": "SELL",
+            "asset": selected_asset,
             "price": f"${price:.{curr_info['dec']}f}",
+            "prob": sell_prob,
             "time": datetime.now(eat_tz).strftime("%H:%M:%S"),
-            "candle": latest_candle_time
+            "candle": latest_candle_time,
+            "horizon": execution_mode,
+            "structure": market_struct
         })
 
-st.session_state.executed_signals = st.session_state.executed_signals[:5]
+# Keep up to 50 saved historical signals
+st.session_state.signal_history = st.session_state.signal_history[:50]
+latest_sig = st.session_state.signal_history[0] if st.session_state.signal_history else None
 
 # ---------------------------------------------------------
-# 8. LOCAL NATIVE QUANT AI ENGINE (NO API KEY NEEDED)
+# 9. LOCAL NATIVE QUANT AI RESPONSE ENGINE
 # ---------------------------------------------------------
 def local_quant_ai_response(user_query, context):
     q = user_query.lower()
-    
     symbol = context["symbol"]
     horizon = context["horizon"]
     curr_price = context["price"]
     c_rsi = context["rsi"]
     c_macd = context["macd_h"]
-    b_score = context["buy_score"]
-    s_score = context["sell_score"]
+    b_prob = context["buy_prob"]
+    s_prob = context["sell_prob"]
+    m_struct = context["structure"]
     
-    # Determine Bias
-    if b_score > s_score:
-        bias = "🟢 BULLISH"
-        confidence = b_score
-    elif s_score > b_score:
-        bias = "🔴 BEARISH"
-        confidence = s_score
-    else:
-        bias = "🟡 NEUTRAL / CONSOLIDATION"
-        confidence = 50
+    bias_str = "🟢 BULLISH" if b_prob > 55 else ("🔴 BEARISH" if s_prob > 55 else "🟡 NEUTRAL / CONSOLIDATION")
+    
+    if any(k in q for k in ["bias", "trend", "structure", "direction", "analysis", "predict", "buy", "sell"]):
+        return f"""### 🏛️ Strategic Market Structure Analysis: {symbol}
+* **Execution Horizon**: `{horizon}` | **Spot Price**: `${curr_price:.2f}`
+* **Algorithmic Bias**: **{bias_str}** (Buy Probability: `{b_prob}%` | Sell: `{s_prob}%`)
 
-    # Dynamic Analysis Generation
-    if any(k in q for k in ["bias", "trend", "outlook", "direction", "predict", "buy", "sell"]):
-        return f"""### 📊 Quantitative Analysis: {symbol}
-* **Current Horizon**: {horizon}
-* **Market Price**: `${curr_price:.2f}`
-* **Algorithmic Bias**: **{bias}** (Confidence: `{confidence}/100`)
+#### 1. Market Structure Breakdown
+* **Structural State**: `{m_struct}`
+* **Dynamic Resistance/Support**: EMA 8 (`${context['ema8']:.2f}`), EMA 21 (`${context['ema21']:.2f}`), EMA 50 (`${context['ema50']:.2f}`)
 
-**Key Drivers:**
-* **EMA Alignment**: {"Bullish Alignment (EMA8 > EMA21 > EMA50)" if context["ema8"] > context["ema21"] else "Bearish / Cross Phase"}
-* **RSI Momentum**: `{c_rsi:.1f}` ({"Overbought (>70)" if c_rsi > 70 else ("Oversold (<30)" if c_rsi < 30 else "Neutral Zone")})
-* **MACD Delta**: `{c_macd:.4f}` ({"Positive Momentum" if c_macd > 0 else "Negative Momentum"})
+#### 2. Technical Momentum & Indicators
+* **RSI (14)**: `{c_rsi:.1f}` — {"Strong upside momentum within healthy bounds." if 50<=c_rsi<=70 else ("Bearish pressure dominating." if c_rsi<50 else "Extreme overbought region.")}
+* **MACD Histogram**: `{c_macd:.4f}` — {"Positive momentum histogram." if c_macd>0 else "Negative momentum histogram."}
 
-💡 **Execution Recommendation**: {"Look for pullback long entries near EMA support." if b_score > s_score else "Look for short entries near resistance."}"""
+#### 3. Fundamental Context
+* Live Google RSS sentiment tracks **{bullish_news_count} Bullish** vs **{bearish_news_count} Bearish** catalysts.
+"""
 
-    elif any(k in q for k in ["rsi", "indicator", "macd", "technical"]):
-        return f"""### 📉 Technical Indicator Breakdown
-* **RSI (14)**: `{c_rsi:.2f}` — {"Showing strong buyer control." if c_rsi > 55 else ("Sellers dominating price action." if c_rsi < 45 else "RSI hovering in equilibrium.")}
-* **MACD Histogram**: `{c_macd:.4f}` — {"Histogram expanding above zero." if c_macd > 0 else "Histogram beneath baseline."}
-* **EMA Structure**:
-  * **EMA 8**: `${context['ema8']:.2f}`
-  * **EMA 21**: `${context['ema21']:.2f}`
-  * **EMA 50**: `${context['ema50']:.2f}`"""
-
-    elif any(k in q for k in ["risk", "stop", "sl", "tp", "target"]):
-        tp_long = curr_price + (curr_price * 0.003)
-        sl_long = curr_price - (curr_price * 0.0015)
-        return f"""### 🛡️ Institutional Risk & Levels
-* **Spot Price**: `${curr_price:.2f}`
-* **Suggested Long TP Target**: `${tp_long:.2f}`
-* **Suggested Long Stop Loss**: `${sl_long:.2f}`
-* **Risk-to-Reward Ratio**: `1 : 2.0`
-⚠️ *Always adhere to maximum 1% risk per trade execution.*"""
+    elif any(k in q for k in ["history", "previous", "signals", "past", "saved"]):
+        count = len(st.session_state.signal_history)
+        return f"### 📜 Historical Signal Records\nCurrently storing **{count}** persistent execution signals in memory. You can view and expand the complete log in the side column list."
 
     else:
-        return f"""### 🤖 MINION Local Quant AI
-I am evaluating **{symbol}** on the **{horizon}** timeframe.
+        return f"""### 🤖 MINION Quant AI
+Currently tracking **{symbol}** on **{horizon}**.
 
-* **Current Price**: `${curr_price:.2f}`
-* **Algorithmic Signal**: **{bias}** (`{confidence}/100`)
-* **RSI**: `{c_rsi:.1f}` | **MACD**: `{c_macd:.4f}`
+* **Price**: `${curr_price:.2f}`
+* **Model Probability**: **BUY {b_prob}%** | **SELL {s_prob}%**
+* **Structure**: `{m_struct}`
 
-*You can ask me questions like:*
-1. "What is the market bias right now?"
-2. "Show technical indicator breakdown."
-3. "Give me stop loss and take profit targets."
+Ask me for:
+1. "Strategic market structure analysis"
+2. "Technical momentum breakdown"
+3. "Risk levels and targets"
 """
 
 # ---------------------------------------------------------
-# 9. MINION DASHBOARD GRID
+# 10. TOP PROBABILITY & LATEST EXECUTION BAR (ABOVE CHART)
+# ---------------------------------------------------------
+badge_class = "prob-badge-buy" if buy_prob >= 58 else ("prob-badge-sell" if sell_prob >= 58 else "prob-badge-neutral")
+bias_label = f"BUY BIAS ({buy_prob}%)" if buy_prob >= 58 else (f"SELL BIAS ({sell_prob}%)" if sell_prob >= 58 else "NEUTRAL / RANGE")
+
+latest_sig_text = f"<b>{latest_sig['type']}</b> @ {latest_sig['price']} ({latest_sig['time']})" if latest_sig else "Scanning for confluence..."
+
+st.markdown(f"""
+<div class="top-prob-bar">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+            <span style="color:#6b778d; font-size:11px; font-weight:bold;">LIVE MODEL PROBABILITY:</span>
+            <span class="{badge_class}" style="margin-left:8px;">{bias_label}</span>
+        </div>
+        <div style="font-family:monospace; font-size:12px; color:#d0d7de;">
+            <span style="color:#6b778d;">LATEST SIGNAL:</span> <span style="color:#f5c518;">{latest_sig_text}</span>
+        </div>
+    </div>
+    <div class="prob-meter-bg">
+        <div class="prob-meter-buy" style="width: {buy_prob}%;"></div>
+        <div class="prob-meter-sell" style="width: {sell_prob}%;"></div>
+    </div>
+    <div style="display:flex; justify-content:space-between; font-size:10px; color:#6b778d; font-family:monospace;">
+        <span>▲ BUY CONFLUENCE: {buy_prob}%</span>
+        <span>STRUCT: {market_struct}</span>
+        <span>▼ SELL CONFLUENCE: {sell_prob}%</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# 11. DASHBOARD LAYOUT GRID
 # ---------------------------------------------------------
 col_left, col_right = st.columns([2.6, 1.2])
 
-# --- LEFT COLUMN: LIVE TRADINGVIEW CHART ---
+# --- LEFT COLUMN: TRADINGVIEW CHART ---
 with col_left:
     tv_html = f"""
-    <div class="tradingview-widget-container" style="height:540px;width:100%">
-      <div id="tv_minion_chart" style="height:540px;width:100%"></div>
+    <div class="tradingview-widget-container" style="height:560px;width:100%">
+      <div id="tv_minion_chart" style="height:560px;width:100%"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
       new TradingView.widget({{
@@ -379,61 +452,67 @@ with col_left:
       </script>
     </div>
     """
-    components.html(tv_html, height=545)
-    st.markdown('<div class="scanning-footer">• SCANNING LIVE •</div>', unsafe_allow_html=True)
+    components.html(tv_html, height=565)
+    st.markdown('<div class="scanning-footer">• SCANNING LIVE MARKET STRUCTURE & LIQUIDITY •</div>', unsafe_allow_html=True)
 
-# --- RIGHT COLUMN: SIGNALS, NEWS & AI CHAT ---
+# --- RIGHT COLUMN: HISTORICAL SIGNALS, NEWS & AI CHAT ---
 with col_right:
-    # 1. LIVE SIGNALS PANEL
-    st.markdown("<h4 style='color:#f5c518; margin-bottom:8px; font-size:14px;'>⚡ LIVE EXECUTED SIGNALS</h4>", unsafe_allow_html=True)
+    # 1. SIGNAL HISTORY ACCORDION PANEL (PERSISTENT LOGS)
+    st.markdown("<h4 style='color:#f5c518; margin-bottom:6px; font-size:13px;'>⚡ LIVE & SAVED SIGNAL HISTORY</h4>", unsafe_allow_html=True)
     
-    if st.session_state.executed_signals:
-        for idx, sig in enumerate(st.session_state.executed_signals):
+    if st.session_state.signal_history:
+        # Show Latest 3 Signal Cards directly
+        for idx, sig in enumerate(st.session_state.signal_history[:3]):
             badge_cls = "sig-buy-badge" if sig["type"] == "BUY" else "sig-sell-badge"
             latest_html = '<span class="sig-latest-pill">LATEST</span>' if idx == 0 else ""
             
-            card_html = f'<div class="aurum-sig-card"><span class="{badge_cls}">{sig["type"]}</span><span class="sig-price-center">{sig["price"]} {latest_html}</span><span class="sig-time-right">{sig["time"]}</span></div>'
+            card_html = f"""<div class="aurum-sig-card">
+                <span class="{badge_cls}">{sig["type"]} ({sig["prob"]}%)</span>
+                <span class="sig-price-center">{sig["price"]} {latest_html}</span>
+                <span class="sig-time-right">{sig["time"]}</span>
+            </div>"""
             st.markdown(card_html, unsafe_allow_html=True)
+            
+        # Expander for full history up to 50 items
+        if len(st.session_state.signal_history) > 3:
+            with st.expander(f"📜 View All Saved Signals ({len(st.session_state.signal_history)})"):
+                for sig in st.session_state.signal_history[3:]:
+                    st.caption(f"**{sig['type']}** @ {sig['price']} | Prob: {sig['prob']}% | Time: {sig['time']} | {sig['horizon']}")
     else:
-        st.info("Scanning candle close for threshold confluence setup...")
+        st.info("Scanning live candles for strategy setup triggers...")
 
     st.divider()
 
     # 2. BREAKING NEWS PANEL
-    st.markdown("<h4 style='color:#f5c518; margin-bottom:8px; font-size:14px;'>📰 BREAKING NEWS & SENTIMENT</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#f5c518; margin-bottom:6px; font-size:13px;'>📰 BREAKING NEWS & SENTIMENT</h4>", unsafe_allow_html=True)
     
     if live_news:
-        for article in live_news[:3]:
+        for article in live_news[:2]:
             sent_color = "#00ffaa" if article['sentiment'] == "BULLISH" else ("#ff4d4d" if article['sentiment'] == "BEARISH" else "#ffaa00")
-            
             st.markdown(f"""
-            <div style="background-color:#121722; border:1px solid #1f2838; padding:10px 12px; border-radius:6px; margin-bottom:8px;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <span style="color:{sent_color}; font-weight:bold; font-size:11px;">{article['badge']} {article['sentiment']}</span> 
-                        <span style="color:#6b778d; font-size:11px; margin-left:4px;">{article['source']}</span>
-                    </div>
-                </div>
-                <a href="{article['link']}" target="_blank" style="color:#ffffff; font-weight:bold; font-size:12px; text-decoration:none; display:block; margin-top:4px;">
+            <div style="background-color:#121722; border:1px solid #1f2838; padding:8px 10px; border-radius:6px; margin-bottom:6px;">
+                <span style="color:{sent_color}; font-weight:bold; font-size:10px;">{article['badge']} {article['sentiment']}</span> 
+                <span style="color:#6b778d; font-size:10px;">| {article['source']}</span>
+                <a href="{article['link']}" target="_blank" style="color:#ffffff; font-weight:bold; font-size:11px; text-decoration:none; display:block; margin-top:2px;">
                     {article['title']}
                 </a>
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.info("Fetching real-time market news...")
+        st.info("Fetching real-time RSS feeds...")
 
     st.divider()
 
     # 3. AI ASSISTANT CHAT
-    st.markdown("<h4 style='color:#f5c518; margin-bottom:4px; font-size:14px;'>🤖 MINION AI ASSISTANT</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='color:#f5c518; margin-bottom:4px; font-size:13px;'>🤖 STRATEGIC QUANT CHAT</h4>", unsafe_allow_html=True)
 
-    chat_container = st.container(height=190)
+    chat_container = st.container(height=180)
     with chat_container:
         for msg in st.session_state.chat_history:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-    if user_input := st.chat_input("Ask MINION AI..."):
+    if user_input := st.chat_input("Ask about market structure..."):
         st.session_state.chat_history.append({"role": "user", "content": user_input})
         with chat_container:
             with st.chat_message("user"):
@@ -448,8 +527,9 @@ with col_right:
             "ema8": ema8,
             "ema21": ema21,
             "ema50": ema50,
-            "buy_score": buy_score,
-            "sell_score": sell_score
+            "buy_prob": buy_prob,
+            "sell_prob": sell_prob,
+            "structure": market_struct
         }
         
         ai_response = local_quant_ai_response(user_input, live_context)
