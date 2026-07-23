@@ -98,13 +98,12 @@ updateClock();
 components.html(clock_html, height=45)
 
 # ---------------------------------------------------------
-# 3. SECRETS CONFIGURATION & STRATEGY SETUP
+# 3. SECRETS OR SIDEBAR API CONFIGURATION
 # ---------------------------------------------------------
 try:
     api_key = st.secrets["TWELVE_DATA_API_KEY"]
 except Exception:
-    st.error("⚠️ Twelve Data API Key missing! Please configure it in your Streamlit Secrets (`secrets.toml`).")
-    st.stop()
+    api_key = st.sidebar.text_input("🔑 Twelve Data API Key", type="password")
 
 st.sidebar.header("🎯 Strategy & Horizon Setup")
 execution_mode = st.sidebar.selectbox(
@@ -142,6 +141,10 @@ else:
     interval, td_interval, atr_mult_tp = "4h", "4h", 4.5
 
 min_score_threshold = st.sidebar.slider("Min Component Score Threshold (/100)", 50, 90, 68)
+
+if not api_key:
+    st.sidebar.warning("⚠️ Please enter your Twelve Data API key above or configure it in your Streamlit Secrets.")
+    st.stop()
 
 # ---------------------------------------------------------
 # 4. REAL-TIME DATA ENGINE (Twelve Data with Volume Safety)
