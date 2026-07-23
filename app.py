@@ -120,7 +120,6 @@ selected_asset = st.sidebar.selectbox(
     ["Gold (Spot XAU/USD)", "EUR/USD", "GBP/USD"]
 )
 
-# Twelve Data symbols mapped to TradingView widgets
 asset_map = {
     "Gold (Spot XAU/USD)": {"td": "XAU/USD", "tv": "OANDA:XAUUSD", "dec": 2},
     "EUR/USD": {"td": "EUR/USD", "tv": "FX:EURUSD", "dec": 4},
@@ -146,7 +145,7 @@ if not api_key:
     st.stop()
 
 # ---------------------------------------------------------
-# 4. REAL-TIME DATA ENGINE (Twelve Data)
+# 4. REAL-TIME DATA ENGINE (Twelve Data with Volume Safety)
 # ---------------------------------------------------------
 @st.cache_data(ttl=15, show_spinner=False)
 def fetch_twelve_data_feed(symbol_string, interval_string, key):
@@ -162,7 +161,16 @@ def fetch_twelve_data_feed(symbol_string, interval_string, key):
         if df.empty:
             return None, "No data returned from Twelve Data API."
             
-        df = df[["open", "high", "low", "close", "volume"]].astype(float)
+        available_cols = [col.lower() for col in df.columns]
+        cols_to_extract = ["open", "high", "low", "close"]
+        
+        df = df[[c for c in cols_to_extract if c in available_cols]].astype(float)
+        
+        if "volume" in available_cols:
+            df["Volume"] = df.get("volume", 0.0).astype(float)
+        else:
+            df["Volume"] = 0.0
+            
         df.columns = ["Open", "High", "Low", "Close", "Volume"]
         df = df.sort_index()
         return df, None
