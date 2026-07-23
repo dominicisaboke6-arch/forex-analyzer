@@ -3,4 +3,5 @@ pandas
 numpy
 pytz
 streamlit-autorefresh
+twelvedata
 google-genai
