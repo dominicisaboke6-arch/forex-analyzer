@@ -1,6 +1,7 @@
 streamlit
+feedparser
+transformers
+torch
 pandas
-yfinance
-pytz
-twelvedata
-streamlit-autorefresh
+xgboost
+scikit-learn
