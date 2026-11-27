@@ -1,0 +1,165 @@
+import json
+import random
+import time
+from pathlib import Path
+import numpy as np
+import pyautogui
+
+pyautogui.FAILSAFE = True
+pyautogui.PAUSE = 0.05
+
+DEFAULT_CONFIG = {
+    "editor_xy": [900, 450],
+    "spreadsheet_first_cell_xy": [400, 320],
+    "default_session_minutes": 15,
+}
+
+
+def load_config(config_path: str = "config.json") -> dict:
+    """Load local screen coordinates and settings, falling back to defaults."""
+    path = Path(config_path)
+    if not path.exists():
+        return DEFAULT_CONFIG.copy()
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    merged = DEFAULT_CONFIG.copy()
+    merged.update(data)
+    return merged
+
+
+def save_config(config: dict, config_path: str = "config.json") -> None:
+    """Persist updated screen coordinates and settings locally."""
+    path = Path(config_path)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2)
+
+
+def _bezier_curve(start: tuple[int, int], end: tuple[int, int], steps: int = 35):
+    """Generate a curved path between start and end with natural human arc."""
+    x0, y0 = start
+    x2, y2 = end
+    dist = float(np.hypot(x2 - x0, y2 - y0))
+    offset = max(15.0, min(140.0, dist * 0.22))
+
+    cx = (x0 + x2) / 2.0 + random.uniform(-offset, offset)
+    cy = (y0 + y2) / 2.0 + random.uniform(-offset, offset)
+
+    raw_t = np.linspace(0.0, 1.0, steps)
+    t = 0.5 - 0.5 * np.cos(np.pi * raw_t)
+
+    xs = (1 - t) ** 2 * x0 + 2 * (1 - t) * t * cx + t**2 * x2
+    ys = (1 - t) ** 2 * y0 + 2 * (1 - t) * t * cy + t**2 * y2
+    return list(zip(xs.astype(int), ys.astype(int)))
+
+
+def human_move(x: int, y: int, duration: float | None = None):
+    """Move cursor smoothly along a curved path."""
+    start = pyautogui.position()
+    dist = float(np.hypot(x - start.x, y - start.y))
+    if duration is None:
+        duration = max(0.18, min(1.4, dist / 900.0 * random.uniform(0.85, 1.25)))
+
+    steps = max(12, int(duration * 60))
+    points = _bezier_curve((start.x, start.y), (x, y), steps=steps)
+    step_delay = duration / len(points)
+
+    for px, py in points:
+        pyautogui.moveTo(int(px), int(py), _pause=False)
+        time.sleep(step_delay * random.uniform(0.8, 1.2))
+
+    time.sleep(random.uniform(0.04, 0.12))
+
+
+def human_click(x: int | None = None, y: int | None = None, button: str = "left", clicks: int = 1):
+    """Move to target and perform left, right, or double click."""
+    if x is not None and y is not None:
+        jx = x + random.randint(-2, 2)
+        jy = y + random.randint(-2, 2)
+        human_move(jx, jy)
+
+    for i in range(clicks):
+        pyautogui.mouseDown(button=button)
+        time.sleep(random.uniform(0.05, 0.12))
+        pyautogui.mouseUp(button=button)
+        if i < clicks - 1:
+            time.sleep(random.uniform(0.08, 0.16))
+
+
+def human_type(text: str, min_delay: float = 0.03, max_delay: float = 0.14):
+    """Type text character-by-character with variable speed and pauses."""
+    for ch in text:
+        pyautogui.write(ch, interval=0)
+        delay = random.uniform(min_delay, max_delay)
+        if ch in ".!?\n":
+            delay += random.uniform(0.12, 0.28)
+        elif random.random() < 0.04:
+            delay += random.uniform(0.15, 0.35)
+        time.sleep(delay)
+
+
+def human_shortcut(*keys: str):
+    """Press a keyboard shortcut combination."""
+    time.sleep(random.uniform(0.08, 0.2))
+    pyautogui.hotkey(*keys)
+    time.sleep(random.uniform(0.12, 0.25))
+
+
+def human_scroll(clicks: int, x: int | None = None, y: int | None = None):
+    """Scroll up (positive) or down (negative) in small increments."""
+    if x is not None and y is not None:
+        human_move(x, y)
+
+    direction = 1 if clicks >= 0 else -1
+    remaining = abs(clicks)
+    while remaining > 0:
+        chunk = min(remaining, random.randint(1, 3))
+        pyautogui.scroll(chunk * direction)
+        remaining -= chunk
+        time.sleep(random.uniform(0.08, 0.22))
+
+
+def run_coding_snippet(editor_xy: tuple[int, int], save_key: str = "ctrl"):
+    """Click a code editor window, type a function, and save."""
+    human_click(editor_xy[0], editor_xy[1], button="left", clicks=1)
+    code = (
+        "def summarize_totals(rows):\n"
+        "    return {k: sum(v) for k, v in rows.items()}\n"
+    )
+    human_type(code)
+    human_shortcut(save_key, "s")
+
+
+def run_spreadsheet_entry(first_cell_xy: tuple[int, int], rows: list[tuple[str, int]]):
+    """Click the first cell in an active spreadsheet and enter rows."""
+    human_click(first_cell_xy[0], first_cell_xy[1], button="left", clicks=1)
+    for label, amount in rows:
+        human_type(label)
+        pyautogui.press("tab")
+        human_type(str(amount))
+        pyautogui.press("enter")
+        pyautogui.press("left")
+        time.sleep(random.uniform(0.15, 0.35))
+
+    human_scroll(-4)
+    human_click(first_cell_xy[0] + 40, first_cell_xy[1] + 20, button="right", clicks=1)
+    time.sleep(0.3)
+    pyautogui.press("escape")
+
+
+def active_session_loop(minutes: int = 15):
+    """Keep active screen time going with gentle, varied UI interactions."""
+    end_time = time.time() + minutes * 60
+    w, h = pyautogui.size()
+    margin_x = int(w * 0.15)
+    margin_y = int(h * 0.15)
+
+    while time.time() < end_time:
+        action = random.choice(["move", "scroll", "pause"])
+        if action == "move":
+            tx = random.randint(margin_x, w - margin_x)
+            ty = random.randint(margin_y, h - margin_y)
+            human_move(tx, ty)
+        elif action == "scroll":
+            human_scroll(random.choice([-3, -2, 2, 3]))
+        else:
+            time.sleep(random.uniform(4.0, 12.0))
