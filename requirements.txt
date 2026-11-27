@@ -1,7 +1,4 @@
 streamlit
-feedparser
-transformers
-torch
-pandas
-xgboost
-scikit-learn
+pyautogui
+numpy
+openpyxl
