@@ -1,115 +1,80 @@
+import threading
+import time
 import streamlit as st
-import feedparser
-import pandas as pd
-import torch
-from transformers import BertTokenizer, BertForSequenceClassification
+import pyautogui
+import human_bot
 
-# Page configuration
-st.set_page_config(
-    page_title="XAU/USD News & Sentiment Intelligence",
-    page_icon="📈",
-    layout="wide"
-)
+st.set_page_config(page_title="Human Bot Controller", layout="centered")
+st.title("Human Bot Controller")
+st.caption("Move cursor to top-left corner (0, 0) at any time to abort pyautogui.")
 
-# Title & Description
-st.title("📈 XAU/USD Macro News & Sentiment Engine")
-st.markdown("Automated news aggregator and local NLP sentiment engine built without third-party APIs.")
+if "config" not in st.session_state:
+    st.session_state.config = human_bot.load_config()
+if "running" not in st.session_state:
+    st.session_state.running = False
 
-# 1. Load Local Sentiment Model (Cached so it downloads only once)
-@st.cache_resource
-def load_sentiment_model():
-    model_name = "ProsusAI/finbert"
-    tokenizer = BertTokenizer.from_pretrained(model_name)
-    model = BertForSequenceClassification.from_pretrained(model_name)
-    return tokenizer, model
+cfg = st.session_state.config
 
-with st.spinner("Loading local FinBERT model into memory..."):
-    tokenizer, model = load_sentiment_model()
-
-# Function to analyze text sentiment
-def analyze_sentiment(text):
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
-    outputs = model(**inputs)
-    predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
-    
-    labels = ["Positive", "Negative", "Neutral"]
-    scores = predictions.detach().numpy()[0]
-    return dict(zip(labels, scores))
-
-# 2. Free RSS News Ingestion
-RSS_FEEDS = {
-    "Investing.com - Forex/Commodities": "https://www.investing.com/rss/news_25.rss",
-    "Wall Street Journal - Markets": "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml"
-}
-
-st.sidebar.header("Data Sources")
-selected_feed = st.sidebar.selectbox("Select RSS Feed", list(RSS_FEEDS.keys()))
-
-@st.cache_data(ttl=300)  # Refresh every 5 minutes
-def fetch_news(feed_url):
-    feed = feedparser.parse(feed_url)
-    news_items = []
-    for entry in feed.entries[:10]:
-        news_items.append({
-            "Title": entry.title,
-            "Published": getattr(entry, 'published', 'N/A'),
-            "Link": entry.link
-        })
-    return news_items
-
-# Main App Layout
-col1, col2 = st.columns([2, 1])
-
+col1, col2 = st.columns(2)
 with col1:
-    st.subheader("📰 Live Financial Headlines")
-    news_data = fetch_news(RSS_FEEDS[selected_feed])
-    
-    if news_data:
-        processed_news = []
-        for item in news_data:
-            sentiment = analyze_sentiment(item["Title"])
-            
-            # Simple rule-based directional inference for Gold based on financial sentiment
-            pos_score = sentiment["Positive"]
-            neg_score = sentiment["Negative"]
-            
-            if pos_score > 0.6:
-                gold_bias = "🔴 Bearish USD Gain"
-            elif neg_score > 0.6:
-                gold_bias = "🟢 Bullish Safe Haven"
-            else:
-                gold_bias = "⚪ Neutral / Mixed"
-
-            processed_news.append({
-                "Headline": item["Title"],
-                "Positive": f"{pos_score:.2f}",
-                "Negative": f"{neg_score:.2f}",
-                "Neutral": f"{sentiment['Neutral']:.2f}",
-                "Gold Bias": gold_bias
-            })
-            
-        df = pd.DataFrame(processed_news)
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("No news items retrieved from the selected RSS feed.")
-
+    task = st.selectbox("Task", ["Active Session Loop", "Coding Snippet", "Spreadsheet Entry"])
 with col2:
-    st.subheader("⚡ Manual Release Predictor")
-    st.markdown("Test hypothetical economic figures against consensus forecasts:")
-    
-    event_type = st.selectbox("Economic Release", ["CPI (Inflation)", "NFP (Employment)", "PPI", "FOMC Rate Signal"])
-    forecast_val = st.number_input("Consensus Forecast / Previous", value=3.6)
-    actual_val = st.number_input("Actual Printed / Expected Figure", value=3.7)
-    
-    if st.button("Predict XAU/USD Direction"):
-        diff = actual_val - forecast_val
-        st.markdown("---")
-        if diff > 0:
-            st.error(f"**Result:** Actual figure came in **HIGHER** than expected by +{diff:.2f}.")
-            st.markdown("👉 **Impact on Gold:** Hawkish signal for Fed rates → **Bearish XAU/USD Short-Term**.")
-        elif diff < 0:
-            st.success(f"**Result:** Actual figure came in **LOWER** than expected by {diff:.2f}.")
-            st.markdown("👉 **Impact on Gold:** Dovish signal for Fed rates → **Bullish XAU/USD Short-Term**.")
-        else:
-            st.info("**Result:** Actual figure matched consensus forecast exactly.")
-            st.markdown("👉 **Impact on Gold:** Low volatility expected / **Neutral**.")
+    minutes = st.number_input(
+        "Active session (minutes)",
+        min_value=1,
+        max_value=240,
+        value=int(cfg.get("default_session_minutes", 15)),
+    )
+
+save_key = st.selectbox("Save shortcut modifier", ["ctrl", "command"], index=0)
+
+st.subheader("Target Screen Coordinates")
+default_xy = cfg["editor_xy"] if task == "Coding Snippet" else cfg["spreadsheet_first_cell_xy"]
+c_x, c_y = st.columns(2)
+target_x = c_x.number_input("X", min_value=0, max_value=5000, value=int(default_xy[0]))
+target_y = c_y.number_input("Y", min_value=0, max_value=5000, value=int(default_xy[1]))
+
+b_col1, b_col2 = st.columns(2)
+if b_col1.button("Capture Mouse in 3s"):
+    time.sleep(3)
+    pos = pyautogui.position()
+    if task == "Coding Snippet":
+        st.session_state.config["editor_xy"] = [pos.x, pos.y]
+    else:
+        st.session_state.config["spreadsheet_first_cell_xy"] = [pos.x, pos.y]
+    st.info(f"Captured X={pos.x}, Y={pos.y}")
+    st.rerun()
+
+if b_col2.button("Save to config.json"):
+    st.session_state.config["default_session_minutes"] = int(minutes)
+    if task == "Coding Snippet":
+        st.session_state.config["editor_xy"] = [int(target_x), int(target_y)]
+    else:
+        st.session_state.config["spreadsheet_first_cell_xy"] = [int(target_x), int(target_y)]
+    human_bot.save_config(st.session_state.config)
+    st.success("Saved settings to config.json")
+
+
+def _run_task(selected_task: str, x: int, y: int, duration_min: int, mod_key: str):
+    try:
+        time.sleep(2)
+        if selected_task == "Active Session Loop":
+            human_bot.active_session_loop(minutes=int(duration_min))
+        elif selected_task == "Coding Snippet":
+            human_bot.run_coding_snippet((int(x), int(y)), save_key=mod_key)
+        elif selected_task == "Spreadsheet Entry":
+            sample_rows = [("Widget A", 120), ("Widget B", 340), ("Widget C", 85)]
+            human_bot.run_spreadsheet_entry((int(x), int(y)), sample_rows)
+    finally:
+        st.session_state.running = False
+
+
+if st.button("Run Bot", type="primary", disabled=st.session_state.running):
+    st.session_state.running = True
+    thread = threading.Thread(
+        target=_run_task,
+        args=(task, target_x, target_y, minutes, save_key),
+        daemon=True,
+    )
+    thread.start()
+    st.success(f"Started '{task}' in 2 seconds...")
