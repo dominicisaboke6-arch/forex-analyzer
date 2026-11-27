@@ -1,18 +1,40 @@
+\import os
+import sys
 import threading
 import time
 import streamlit as st
-import pyautogui
-import human_bot
+
+
+def _has_desktop_display() -> bool:
+    if os.name == "nt" or sys.platform == "darwin":
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+HAS_DISPLAY = _has_desktop_display()
+
+if HAS_DISPLAY:
+    import pyautogui
+    import human_bot
+else:
+    pyautogui = None
+    human_bot = None
 
 st.set_page_config(page_title="Human Bot Controller", layout="centered")
 st.title("Human Bot Controller")
 st.caption("Move cursor to top-left corner (0, 0) at any time to abort pyautogui.")
 
+if not HAS_DISPLAY:
+    st.warning(
+        "Cloud/headless environment detected (no desktop display). "
+        "Run this app locally on your computer (`streamlit run app.py`) to control mouse and keyboard."
+    )
+    st.stop()
+
 if "config" not in st.session_state:
     st.session_state.config = human_bot.load_config()
-if "running" not in st.session_state:
-    st.session_state.running = False
 
+running_event = threading.Event()
 cfg = st.session_state.config
 
 col1, col2 = st.columns(2)
@@ -57,7 +79,7 @@ if b_col2.button("Save to config.json"):
 
 def _run_task(selected_task: str, x: int, y: int, duration_min: int, mod_key: str):
     try:
-        time.sleep(2)
+        time.sleep(3)
         if selected_task == "Active Session Loop":
             human_bot.active_session_loop(minutes=int(duration_min))
         elif selected_task == "Coding Snippet":
@@ -66,15 +88,16 @@ def _run_task(selected_task: str, x: int, y: int, duration_min: int, mod_key: st
             sample_rows = [("Widget A", 120), ("Widget B", 340), ("Widget C", 85)]
             human_bot.run_spreadsheet_entry((int(x), int(y)), sample_rows)
     finally:
-        st.session_state.running = False
+        running_event.clear()
 
 
-if st.button("Run Bot", type="primary", disabled=st.session_state.running):
-    st.session_state.running = True
-    thread = threading.Thread(
-        target=_run_task,
-        args=(task, target_x, target_y, minutes, save_key),
-        daemon=True,
-    )
-    thread.start()
-    st.success(f"Started '{task}' in 2 seconds...")
+if st.button("Run Bot", type="primary"):
+    if not running_event.is_set():
+        running_event.set()
+        thread = threading.Thread(
+            target=_run_task,
+            args=(task, target_x, target_y, minutes, save_key),
+            daemon=True,
+        )
+        thread.start()
+        st.success(f"Started '{task}' in 3 seconds—switch to your target window now.")
